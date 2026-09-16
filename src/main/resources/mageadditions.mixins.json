@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "net.fireboy.mageadditions.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "AbstractSpellMixin",
+    "CounterspellSpellMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
