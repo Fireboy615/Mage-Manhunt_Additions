@@ -134,15 +134,23 @@ public final class CastTimeOverrides {
      */
     public static int resolve(AbstractSpell spell, int originalEffectiveTicks) {
         Snapshot current = snapshot;
+
+        // Dedicated spell patches may supply a new base cast time before the
+        // generic per-spell override is applied. Counterspell TARGETED mode uses
+        // this to become a real LONG cast while preserving the global INSTANT
+        // safety rule for every other spell.
+        int baseEffectiveTicks = net.fireboy.mageadditions.spell.CounterspellHandler
+            .getBaseCastTime(spell, originalEffectiveTicks);
+
         CompiledRule rule = current.rules.get(spell.getSpellId());
 
         if (rule == null) {
-            return originalEffectiveTicks;
+            return baseEffectiveTicks;
         }
 
         double result = switch (rule.mode) {
             case ABSOLUTE -> rule.value;
-            case MULTIPLIER -> originalEffectiveTicks * rule.value;
+            case MULTIPLIER -> baseEffectiveTicks * rule.value;
         };
 
         int resolvedTicks = clampRoundedTicks(result, current.maxCastTimeTicks);
@@ -186,10 +194,14 @@ public final class CastTimeOverrides {
 
         JsonObject counterspell = new JsonObject();
         counterspell.addProperty("enabled", false);
+        counterspell.addProperty("mode", "cone");
+        counterspell.addProperty("cast_time_ticks", 12);
         counterspell.addProperty("range", 6.0);
+        counterspell.addProperty("aim_assist", 0.35);
         counterspell.addProperty("angle_degrees", 90.0);
         counterspell.addProperty("require_line_of_sight", true);
         counterspell.addProperty("target_mode", "all");
+        counterspell.addProperty("debug_particles", false);
         root.add("counterspell", counterspell);
 
         JsonObject examples = new JsonObject();

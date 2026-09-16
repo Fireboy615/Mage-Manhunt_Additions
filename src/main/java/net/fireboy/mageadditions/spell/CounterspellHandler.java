@@ -7,13 +7,16 @@ import io.redspace.ironsspellbooks.api.spells.AbstractSpell;
 import io.redspace.ironsspellbooks.api.util.Utils;
 import io.redspace.ironsspellbooks.capabilities.magic.MagicManager;
 import io.redspace.ironsspellbooks.capabilities.magic.RecastResult;
+import io.redspace.ironsspellbooks.capabilities.magic.TargetEntityCastData;
 import io.redspace.ironsspellbooks.effect.MagicMobEffect;
 import io.redspace.ironsspellbooks.entity.mobs.AntiMagicSusceptible;
 import io.redspace.ironsspellbooks.entity.mobs.IMagicSummon;
+import io.redspace.ironsspellbooks.spells.ender.CounterspellSpell;
 import net.fireboy.mageadditions.MageAdditions;
 import net.fireboy.mageadditions.config.CounterspellConfig;
 import net.minecraft.core.Holder;
 import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.entity.Entity;
@@ -30,12 +33,12 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Replaces Counterspell's single long raycast with a configurable forward cone.
+ * Counterspell behaviour replacement.
  *
- * Target selection is ours, but the anti-magic behaviour is intentionally kept
- * equivalent to Iron's Counterspell implementation: CounterSpellEvent is posted,
- * AntiMagicSusceptible is invoked, player/mob casts are cancelled, recasts are
- * cleared, and MagicMobEffects are removed.
+ * CONE is the v0.2 forward-area version.
+ * TARGETED uses Iron's own target-lock casting system (the same family of
+ * mechanics used by targeted LONG spells): select a living anti-magic target
+ * before casting, keep that target in MagicData, then counterspell it on finish.
  */
 public final class CounterspellHandler {
     private static volatile Settings settings = Settings.defaults();
@@ -48,8 +51,16 @@ public final class CounterspellHandler {
             return;
         }
 
+        Mode mode = Mode.parse(raw.mode);
+        if (mode == null) {
+            MageAdditions.LOGGER.warn("Unknown counterspell mode '{}'; using 'cone'", raw.mode);
+            mode = Mode.CONE;
+        }
+
         double range = finiteClamp(raw.range, 0.0, 64.0, 6.0);
+        double aimAssist = finiteClamp(raw.aim_assist, 0.0, 3.0, 0.35);
         double angle = finiteClamp(raw.angle_degrees, 1.0, 180.0, 90.0);
+        int castTimeTicks = Math.max(0, Math.min(raw.cast_time_ticks, 72_000));
         TargetMode targetMode = TargetMode.parse(raw.target_mode);
 
         if (targetMode == null) {
@@ -62,15 +73,21 @@ public final class CounterspellHandler {
 
         settings = new Settings(
             raw.enabled,
+            mode,
+            castTimeTicks,
             range,
+            aimAssist,
             angle,
             raw.require_line_of_sight,
-            targetMode
+            targetMode,
+            raw.debug_particles
         );
 
         MageAdditions.LOGGER.info(
-            "Counterspell patch: enabled={}, range={}, angle={} degrees, lineOfSight={}, targetMode={}",
+            "Counterspell patch: enabled={}, mode={}, castTime={}t, range={}, angle={} degrees, lineOfSight={}, targetMode={}",
             raw.enabled,
+            mode.name().toLowerCase(Locale.ROOT),
+            castTimeTicks,
             range,
             angle,
             raw.require_line_of_sight,
@@ -82,23 +99,83 @@ public final class CounterspellHandler {
         return settings.enabled;
     }
 
+    public static boolean isTargetedMode() {
+        Settings current = settings;
+        return current.enabled && current.mode == Mode.TARGETED;
+    }
+
+    public static boolean isTargetedCounterspell(AbstractSpell spell) {
+        return isTargetedMode() && spell instanceof CounterspellSpell;
+    }
+
+    /**
+     * Makes targeted Counterspell a real LONG cast without enabling delayed
+     * INSTANT behaviour globally. Generic per-spell cast_time_overrides can still
+     * override this value afterward.
+     */
+    public static int getBaseCastTime(AbstractSpell spell, int originalTicks) {
+        Settings current = settings;
+        if (current.enabled && current.mode == Mode.TARGETED && spell instanceof CounterspellSpell) {
+            return current.castTimeTicks;
+        }
+        return originalTicks;
+    }
+
+    /**
+     * Uses Iron's built-in target acquisition and TargetEntityCastData. This is
+     * intentionally restricted to LivingEntity targets because that is the
+     * target-lock data type used by Iron's targeted spells.
+     */
+    public static boolean acquireTarget(
+        Level level,
+        LivingEntity caster,
+        MagicData playerMagicData,
+        AbstractSpell spell
+    ) {
+        Settings current = settings;
+        if (!current.enabled || current.mode != Mode.TARGETED) {
+            return true;
+        }
+
+        int range = Math.max(1, (int) Math.round(current.range));
+        float aimAssist = (float) current.aimAssist;
+
+        return Utils.preCastTargetHelper(
+            level,
+            caster,
+            playerMagicData,
+            spell,
+            range,
+            aimAssist,
+            true,
+            target -> target != caster && Utils.validAntiMagicTarget(target)
+        );
+    }
+
     public static String describe() {
         Settings current = settings;
         if (!current.enabled) {
             return "disabled";
         }
+
+        if (current.mode == Mode.TARGETED) {
+            return String.format(
+                Locale.ROOT,
+                "targeted / %.1f blocks / %d ticks",
+                current.range,
+                current.castTimeTicks
+            );
+        }
+
         return String.format(
             Locale.ROOT,
-            "%.1f blocks / %.1f degrees / %s",
+            "cone / %.1f blocks / %.1f degrees / %s",
             current.range,
             current.angleDegrees,
             current.targetMode.name().toLowerCase(Locale.ROOT)
         );
     }
 
-    /**
-     * Executes the patched Counterspell effect. Called server-side from the mixin.
-     */
     public static void cast(
         Level level,
         LivingEntity caster,
@@ -110,6 +187,34 @@ public final class CounterspellHandler {
             return;
         }
 
+        if (current.mode == Mode.TARGETED) {
+            castTargeted(level, caster, playerMagicData);
+        } else {
+            castCone(level, caster, playerMagicData, current);
+        }
+
+        spell.playSound(spell.getCastFinishSound(), caster);
+    }
+
+    private static void castTargeted(Level level, LivingEntity caster, MagicData playerMagicData) {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+
+        if (playerMagicData.getAdditionalCastData() instanceof TargetEntityCastData targetData) {
+            LivingEntity target = targetData.getTarget(serverLevel);
+            if (target != null && target != caster && Utils.validAntiMagicTarget(target)) {
+                applyCounterspell(caster, target, playerMagicData);
+            }
+        }
+    }
+
+    private static void castCone(
+        Level level,
+        LivingEntity caster,
+        MagicData playerMagicData,
+        Settings current
+    ) {
         Vec3 origin = caster.getEyePosition();
         Vec3 look = caster.getLookAngle().normalize();
         double minDot = Math.cos(Math.toRadians(current.angleDegrees * 0.5));
@@ -142,16 +247,14 @@ public final class CounterspellHandler {
         List<Candidate> selected = selectTargets(candidates, current.targetMode);
         for (Candidate candidate : selected) {
             applyCounterspell(caster, candidate.entity, playerMagicData);
-            spawnHitTrail(level, origin, candidate.targetPoint);
+            if (current.debugParticles) {
+                spawnHitTrail(level, origin, candidate.targetPoint);
+            }
         }
 
-        // Draw a light cone outline every cast so the test build makes the new
-        // targeting geometry visible even when no valid target is inside it.
-        spawnConeOutline(level, origin, look, current.range, current.angleDegrees);
-
-        // Counterspell's original onCast ends with super.onCast(...), whose
-        // relevant default behaviour is the normal cast-finish sound.
-        spell.playSound(spell.getCastFinishSound(), caster);
+        if (current.debugParticles) {
+            spawnConeOutline(level, origin, look, current.range, current.angleDegrees);
+        }
     }
 
     private static List<Candidate> selectTargets(List<Candidate> candidates, TargetMode mode) {
@@ -184,8 +287,6 @@ public final class CounterspellHandler {
             return;
         }
 
-        // This block mirrors Iron's own Counterspell anti-magic rules, including
-        // its special treatment of the caster's own summons.
         if (target instanceof AntiMagicSusceptible antiMagicSusceptible) {
             if (antiMagicSusceptible instanceof IMagicSummon summon) {
                 if (summon.getSummoner() == caster) {
@@ -208,7 +309,6 @@ public final class CounterspellHandler {
         }
 
         if (target instanceof LivingEntity livingEntity) {
-            // Copy the keys first to avoid concurrent modification while effects are removed.
             for (Holder<MobEffect> mobEffect : livingEntity.getActiveEffectsMap().keySet().stream().toList()) {
                 if (mobEffect.value() instanceof MagicMobEffect) {
                     livingEntity.removeEffect(mobEffect);
@@ -246,7 +346,6 @@ public final class CounterspellHandler {
         double sin = Math.sin(halfAngle);
         double cos = Math.cos(halfAngle);
 
-        // Build an orthonormal basis around the player's look vector.
         Vec3 referenceUp = Math.abs(look.y) > 0.95
             ? new Vec3(1.0, 0.0, 0.0)
             : new Vec3(0.0, 1.0, 0.0);
@@ -293,6 +392,22 @@ public final class CounterspellHandler {
         return Math.max(min, Math.min(max, value));
     }
 
+    private enum Mode {
+        CONE,
+        TARGETED;
+
+        static Mode parse(String raw) {
+            if (raw == null) {
+                return null;
+            }
+            try {
+                return valueOf(raw.trim().toUpperCase(Locale.ROOT));
+            } catch (IllegalArgumentException ignored) {
+                return null;
+            }
+        }
+    }
+
     private enum TargetMode {
         ALL,
         NEAREST,
@@ -319,13 +434,17 @@ public final class CounterspellHandler {
 
     private record Settings(
         boolean enabled,
+        Mode mode,
+        int castTimeTicks,
         double range,
+        double aimAssist,
         double angleDegrees,
         boolean requireLineOfSight,
-        TargetMode targetMode
+        TargetMode targetMode,
+        boolean debugParticles
     ) {
         static Settings defaults() {
-            return new Settings(false, 6.0, 90.0, true, TargetMode.ALL);
+            return new Settings(false, Mode.CONE, 12, 6.0, 0.35, 90.0, true, TargetMode.ALL, false);
         }
     }
 }
