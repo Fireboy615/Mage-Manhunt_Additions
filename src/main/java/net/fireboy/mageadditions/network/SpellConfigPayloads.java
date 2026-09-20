@@ -33,6 +33,10 @@ public final class SpellConfigPayloads {
         }
     }
 
+    /**
+     * Editor update. Mage Additions no longer duplicates Iron's mana/cooldown
+     * overrides; those native values above remain the single source of truth.
+     */
     public record Update(
             ResourceLocation spellId,
             boolean enabled,
@@ -44,11 +48,7 @@ public final class SpellConfigPayloads {
             double cooldownSeconds,
             boolean allowCrafting,
             String castMode,
-            double castValue,
-            String manaMode,
-            double manaValue,
-            String cooldownMode,
-            double cooldownValue
+            double castValue
     ) implements CustomPacketPayload {
         public static final Type<Update> TYPE = new Type<>(
                 ResourceLocation.fromNamespaceAndPath(MageAdditions.MODID, "spell_config_update")
@@ -68,10 +68,6 @@ public final class SpellConfigPayloads {
                         buffer.readDouble(),
                         buffer.readBoolean(),
                         buffer.readUtf(32),
-                        buffer.readDouble(),
-                        buffer.readUtf(32),
-                        buffer.readDouble(),
-                        buffer.readUtf(32),
                         buffer.readDouble()
                 );
             }
@@ -89,10 +85,6 @@ public final class SpellConfigPayloads {
                 buffer.writeBoolean(value.allowCrafting());
                 buffer.writeUtf(value.castMode(), 32);
                 buffer.writeDouble(value.castValue());
-                buffer.writeUtf(value.manaMode(), 32);
-                buffer.writeDouble(value.manaValue());
-                buffer.writeUtf(value.cooldownMode(), 32);
-                buffer.writeDouble(value.cooldownValue());
             }
         };
 
@@ -117,11 +109,7 @@ public final class SpellConfigPayloads {
             double cooldownSeconds,
             boolean allowCrafting,
             String castMode,
-            double castValue,
-            String manaMode,
-            double manaValue,
-            String cooldownMode,
-            double cooldownValue
+            double castValue
     ) implements CustomPacketPayload {
         public static final Type<Snapshot> TYPE = new Type<>(
                 ResourceLocation.fromNamespaceAndPath(MageAdditions.MODID, "spell_config_snapshot")
@@ -145,10 +133,6 @@ public final class SpellConfigPayloads {
                         buffer.readDouble(),
                         buffer.readBoolean(),
                         buffer.readUtf(32),
-                        buffer.readDouble(),
-                        buffer.readUtf(32),
-                        buffer.readDouble(),
-                        buffer.readUtf(32),
                         buffer.readDouble()
                 );
             }
@@ -170,10 +154,6 @@ public final class SpellConfigPayloads {
                 buffer.writeBoolean(value.allowCrafting());
                 buffer.writeUtf(value.castMode(), 32);
                 buffer.writeDouble(value.castValue());
-                buffer.writeUtf(value.manaMode(), 32);
-                buffer.writeDouble(value.manaValue());
-                buffer.writeUtf(value.cooldownMode(), 32);
-                buffer.writeDouble(value.cooldownValue());
             }
         };
 
@@ -182,6 +162,7 @@ public final class SpellConfigPayloads {
             return TYPE;
         }
     }
+
     /**
      * Iron's live values sent from the server to clients. This packet is kept
      * separate from Snapshot because Snapshot also carries editor-only state and
@@ -256,5 +237,4 @@ public final class SpellConfigPayloads {
             return TYPE;
         }
     }
-
 }

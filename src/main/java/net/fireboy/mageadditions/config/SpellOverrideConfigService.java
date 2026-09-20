@@ -53,6 +53,25 @@ public final class SpellOverrideConfigService {
         }
     }
 
+    /**
+     * Updates only the cast-time rule. Legacy Mage Additions mana/cooldown rules
+     * are intentionally left untouched so removing them from the GUI does not
+     * silently rewrite an existing hand-authored config.
+     */
+    public static CastTimeOverrides.ReloadResult saveCastTimeRule(String spellId, RuleState castTime) {
+        try {
+            Document document = readDocument();
+            CastTimeConfig.BalanceTweaks balance = readBalance(document.root, document.config);
+
+            updateRule(balance.cast_time_overrides, spellId, castTime);
+
+            writeTopLevelObject(document.raw, "balance_tweaks", GSON.toJson(balance));
+            return CastTimeOverrides.reload();
+        } catch (Exception exception) {
+            return new CastTimeOverrides.ReloadResult(false, 0, 0, rootMessage(exception), 0, 0);
+        }
+    }
+
     private static Document readDocument() throws Exception {
         Path path = CastTimeOverrides.configPath();
         if (Files.notExists(path)) {

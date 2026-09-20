@@ -5,6 +5,7 @@ import io.redspace.ironsspellbooks.api.spells.AbstractSpell;
 import io.redspace.ironsspellbooks.api.spells.SchoolType;
 import io.redspace.ironsspellbooks.api.spells.SpellRarity;
 import net.fireboy.mageadditions.config.CastTimeOverrides;
+import net.fireboy.mageadditions.config.SpellOverrideConfigService;
 import net.fireboy.mageadditions.network.SpellConfigPayloads;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;
@@ -21,7 +22,11 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Functional per-spell editor for Iron's 3.14.8 + Mage Additions generic balance rules.
+ * Server-authoritative per-spell editor for Iron's + Mage Additions.
+ *
+ * <p>Iron's owns its native balancing values. Mage Additions only exposes
+ * additional behaviour here; duplicated Mage-side mana/cooldown overrides are
+ * intentionally no longer part of this screen.</p>
  */
 public final class SpellEditorScreen extends Screen {
     private static final int FIELD_WIDTH = 132;
@@ -38,6 +43,7 @@ public final class SpellEditorScreen extends Screen {
     private String backendName = "";
     private Component status = Component.empty();
     private int originalMaxLevel;
+    private double originalCastTimeLevelOne;
 
     private boolean enabled;
     private boolean allowCrafting;
@@ -45,17 +51,11 @@ public final class SpellEditorScreen extends Screen {
     private SpellRarity rarity;
     private List<SchoolType> schools = List.of();
 
-    private OverrideMode castMode;
-    private OverrideMode manaMode;
-    private OverrideMode cooldownMode;
-
     private Button enabledButton;
     private Button schoolButton;
     private Button rarityButton;
     private Button craftingButton;
-    private Button castModeButton;
-    private Button manaModeButton;
-    private Button cooldownModeButton;
+    private Button castResetButton;
     private Button saveButton;
     private Button counterspellButton;
     private Button ironsTabButton;
@@ -76,8 +76,8 @@ public final class SpellEditorScreen extends Screen {
     private EditBox powerMultiplierBox;
     private EditBox cooldownSecondsBox;
     private EditBox castValueBox;
-    private EditBox manaValueBox;
-    private EditBox cooldownValueBox;
+    private EditBox castMultiplierBox;
+    private LinkedNumericOverrideControl castControl;
 
     public SpellEditorScreen(Screen parent, AbstractSpell spell) {
         super(Component.literal("Edit Spell - " + spell.getSpellId()));
@@ -89,17 +89,14 @@ public final class SpellEditorScreen extends Screen {
     protected void init() {
         IronsSpellConfigAccess.Settings iron = IronsSpellConfigAccess.read(this.spell);
         IronsSpellConfigAccess.Settings original = IronsSpellConfigAccess.defaults(this.spell);
-        MageAdditionsConfigEditor.SpellRules mage = MageAdditionsConfigEditor.readSpellRules(this.spell.getSpellId());
 
         this.originalMaxLevel = original.maxLevel();
+        this.originalCastTimeLevelOne = Math.max(0.0, this.spell.getCastTime(1));
 
         this.enabled = iron.enabled();
         this.allowCrafting = iron.allowCrafting();
         this.schoolId = iron.school();
         this.rarity = iron.minRarity();
-        this.castMode = OverrideMode.from(mage.castTime());
-        this.manaMode = OverrideMode.from(mage.mana());
-        this.cooldownMode = OverrideMode.from(mage.cooldown());
 
         List<SchoolType> discoveredSchools = new ArrayList<>(SchoolRegistry.REGISTRY.stream().toList());
         discoveredSchools.sort(Comparator.comparing(s -> s.getDisplayName().getString().toLowerCase(Locale.ROOT)));
@@ -117,8 +114,8 @@ public final class SpellEditorScreen extends Screen {
             this.columnWidth = panelWidth - 16;
             this.contentY = 76;
 
-            int availableForRows = Math.max(140, bottomY - this.contentY - FIELD_HEIGHT - 8);
-            this.rowGap = Math.max(MIN_ROW_GAP, Math.min(WIDE_ROW_GAP, availableForRows / 7));
+            int availableForRows = Math.max(160, bottomY - this.contentY - FIELD_HEIGHT - 8);
+            this.rowGap = Math.max(MIN_ROW_GAP, Math.min(WIDE_ROW_GAP, availableForRows / 8));
 
             int tabWidth = Math.min(150, Math.max(100, (panelWidth - 10) / 2));
             int tabsTotal = tabWidth * 2 + 6;
@@ -180,43 +177,40 @@ public final class SpellEditorScreen extends Screen {
             b.setMessage(toggleLabel("Craftable", this.allowCrafting));
         }).bounds(ironFieldX, y, FIELD_WIDTH, FIELD_HEIGHT).build());
 
+        // Mage Additions: linked absolute/multiplier control. Whichever field is
+        // edited last becomes the persisted authority for future-proof behaviour.
         y = this.contentY;
-        this.castModeButton = addRenderableWidget(Button.builder(modeLabel("Cast", this.castMode), b -> {
-            this.castMode = this.castMode.next();
-            b.setMessage(modeLabel("Cast", this.castMode));
-            updateOverrideFields();
+        this.castResetButton = addRenderableWidget(Button.builder(Component.literal("Default"), b -> {
+            this.castControl.resetToDefault();
+            updateCastControlPresentation();
         }).bounds(mageFieldX, y, FIELD_WIDTH, FIELD_HEIGHT).build());
         y += this.rowGap;
 
-        this.castValueBox = numericBox(mageFieldX, y, format(mage.castTime().value()));
+        // Original/reference row is render-only.
         y += this.rowGap;
 
-        this.manaModeButton = addRenderableWidget(Button.builder(modeLabel("Mana", this.manaMode), b -> {
-            this.manaMode = this.manaMode.next();
-            b.setMessage(modeLabel("Mana", this.manaMode));
-            updateOverrideFields();
-        }).bounds(mageFieldX, y, FIELD_WIDTH, FIELD_HEIGHT).build());
+        this.castValueBox = numericBox(mageFieldX, y, format(this.originalCastTimeLevelOne));
         y += this.rowGap;
+        this.castMultiplierBox = numericBox(mageFieldX, y, this.originalCastTimeLevelOne == 0.0 ? "N/A" : "1");
 
-        this.manaValueBox = numericBox(mageFieldX, y, format(mage.mana().value()));
-        y += this.rowGap;
+        this.castControl = new LinkedNumericOverrideControl(
+                this.castValueBox,
+                this.castMultiplierBox,
+                this.originalCastTimeLevelOne,
+                0.0,
+                1_000_000.0,
+                0.0,
+                1_000_000.0,
+                this::updateCastControlPresentation
+        );
 
-        this.cooldownModeButton = addRenderableWidget(Button.builder(modeLabel("Cooldown", this.cooldownMode), b -> {
-            this.cooldownMode = this.cooldownMode.next();
-            b.setMessage(modeLabel("Cooldown", this.cooldownMode));
-            updateOverrideFields();
-        }).bounds(mageFieldX, y, FIELD_WIDTH, FIELD_HEIGHT).build());
-        y += this.rowGap;
-
-        this.cooldownValueBox = numericBox(mageFieldX, y, format(mage.cooldown().value()));
-
+        y += this.rowGap * 2;
         if (this.spell.getSpellId().equals("irons_spellbooks:counterspell")) {
-            int buttonY = y + this.rowGap + 4;
             this.counterspellButton = addRenderableWidget(Button.builder(Component.literal("Counterspell Rework Settings..."), b -> {
                 if (this.minecraft != null) {
                     this.minecraft.setScreen(new CounterspellEditorScreen(this));
                 }
-            }).bounds(this.rightColumnX, buttonY, this.columnWidth, FIELD_HEIGHT).build());
+            }).bounds(this.rightColumnX, y, this.columnWidth, FIELD_HEIGHT).build());
         } else {
             this.counterspellButton = null;
         }
@@ -239,8 +233,8 @@ public final class SpellEditorScreen extends Screen {
                 .bounds(buttonX, bottomY, saveWidth, FIELD_HEIGHT).build());
 
         this.canEdit = false;
-        updateOverrideFields();
         setEditingEnabled(false);
+        updateCastControlPresentation();
         updateSectionVisibility();
 
         if (this.minecraft != null && this.minecraft.getConnection() != null) {
@@ -270,12 +264,8 @@ public final class SpellEditorScreen extends Screen {
         setVisible(this.cooldownSecondsBox, showIron);
         setVisible(this.craftingButton, showIron);
 
-        setVisible(this.castModeButton, showMage);
-        setVisible(this.castValueBox, showMage);
-        setVisible(this.manaModeButton, showMage);
-        setVisible(this.manaValueBox, showMage);
-        setVisible(this.cooldownModeButton, showMage);
-        setVisible(this.cooldownValueBox, showMage);
+        setVisible(this.castResetButton, showMage);
+        if (this.castControl != null) this.castControl.setVisible(showMage);
         setVisible(this.counterspellButton, showMage);
 
         if (this.ironsTabButton != null) {
@@ -299,10 +289,11 @@ public final class SpellEditorScreen extends Screen {
         return box;
     }
 
-    private void updateOverrideFields() {
-        if (this.castValueBox != null) this.castValueBox.active = this.castMode != OverrideMode.OFF && this.canEdit;
-        if (this.manaValueBox != null) this.manaValueBox.active = this.manaMode != OverrideMode.OFF && this.canEdit;
-        if (this.cooldownValueBox != null) this.cooldownValueBox.active = this.cooldownMode != OverrideMode.OFF && this.canEdit;
+    private void updateCastControlPresentation() {
+        if (this.castResetButton == null || this.castControl == null) return;
+
+        this.castResetButton.setMessage(Component.literal("Reset"));
+        this.castResetButton.active = this.canEdit && this.castControl.authority() != LinkedNumericOverrideControl.Authority.DEFAULT;
     }
 
     private void setEditingEnabled(boolean enabled) {
@@ -314,11 +305,9 @@ public final class SpellEditorScreen extends Screen {
         this.powerMultiplierBox.active = enabled;
         this.cooldownSecondsBox.active = enabled;
         this.craftingButton.active = enabled;
-        this.castModeButton.active = enabled;
-        this.manaModeButton.active = enabled;
-        this.cooldownModeButton.active = enabled;
+        if (this.castControl != null) this.castControl.setActive(enabled);
         this.saveButton.active = enabled;
-        updateOverrideFields();
+        updateCastControlPresentation();
     }
 
     private void cycleSchool() {
@@ -357,16 +346,8 @@ public final class SpellEditorScreen extends Screen {
         this.cooldownSecondsBox.setValue(format(defaults.cooldownSeconds()));
         this.craftingButton.setMessage(toggleLabel("Craftable", this.allowCrafting));
 
-        this.castMode = OverrideMode.OFF;
-        this.manaMode = OverrideMode.OFF;
-        this.cooldownMode = OverrideMode.OFF;
-        this.castModeButton.setMessage(modeLabel("Cast", this.castMode));
-        this.manaModeButton.setMessage(modeLabel("Mana", this.manaMode));
-        this.cooldownModeButton.setMessage(modeLabel("Cooldown", this.cooldownMode));
-        this.castValueBox.setValue("0");
-        this.manaValueBox.setValue("0");
-        this.cooldownValueBox.setValue("0");
-        updateOverrideFields();
+        this.castControl.resetToDefault();
+        updateCastControlPresentation();
         this.status = Component.literal("Defaults selected - press Save to apply.").withStyle(ChatFormatting.YELLOW);
     }
 
@@ -384,9 +365,7 @@ public final class SpellEditorScreen extends Screen {
             double powerMultiplier = parseDouble(this.powerMultiplierBox, "Power multiplier", 0.0, 1_000_000.0);
             double cooldownSeconds = parseDouble(this.cooldownSecondsBox, "Cooldown", 0.0, 3600.0);
 
-            double castValue = parseOverrideValue(this.castValueBox, this.castMode, "Cast override");
-            double manaValue = parseOverrideValue(this.manaValueBox, this.manaMode, "Mana override");
-            double cooldownValue = parseOverrideValue(this.cooldownValueBox, this.cooldownMode, "Cooldown override");
+            SpellOverrideConfigService.RuleState castRule = this.castControl.toRuleState("Cast time");
 
             this.waitingForServerSnapshot = true;
             this.status = Component.literal("Saving to server...").withStyle(ChatFormatting.YELLOW);
@@ -402,12 +381,8 @@ public final class SpellEditorScreen extends Screen {
                     powerMultiplier,
                     cooldownSeconds,
                     this.allowCrafting,
-                    this.castMode.wireName,
-                    castValue,
-                    this.manaMode.wireName,
-                    manaValue,
-                    this.cooldownMode.wireName,
-                    cooldownValue
+                    castRule.enabled() ? castRule.mode() : "off",
+                    castRule.enabled() ? castRule.value() : 0.0
             ));
         } catch (Exception exception) {
             this.waitingForServerSnapshot = false;
@@ -436,10 +411,6 @@ public final class SpellEditorScreen extends Screen {
             this.rarity = SpellRarity.COMMON;
         }
 
-        this.castMode = OverrideMode.fromWire(snapshot.castMode());
-        this.manaMode = OverrideMode.fromWire(snapshot.manaMode());
-        this.cooldownMode = OverrideMode.fromWire(snapshot.cooldownMode());
-
         this.enabledButton.setMessage(toggleLabel("Enabled", this.enabled));
         this.schoolButton.setMessage(schoolLabel());
         this.maxLevelBox.setValue(Integer.toString(snapshot.maxLevel()));
@@ -449,23 +420,13 @@ public final class SpellEditorScreen extends Screen {
         this.cooldownSecondsBox.setValue(format(snapshot.cooldownSeconds()));
         this.craftingButton.setMessage(toggleLabel("Craftable", this.allowCrafting));
 
-        this.castModeButton.setMessage(modeLabel("Cast", this.castMode));
-        this.castValueBox.setValue(format(snapshot.castValue()));
-        this.manaModeButton.setMessage(modeLabel("Mana", this.manaMode));
-        this.manaValueBox.setValue(format(snapshot.manaValue()));
-        this.cooldownModeButton.setMessage(modeLabel("Cooldown", this.cooldownMode));
-        this.cooldownValueBox.setValue(format(snapshot.cooldownValue()));
+        this.castControl.applyState(snapshot.castMode(), snapshot.castValue());
 
         setEditingEnabled(this.canEdit);
         updateSectionVisibility();
 
         ChatFormatting color = snapshot.success() ? ChatFormatting.GREEN : ChatFormatting.RED;
         this.status = Component.literal(snapshot.message()).withStyle(color);
-    }
-
-    private double parseOverrideValue(EditBox box, OverrideMode mode, String label) {
-        if (mode == OverrideMode.OFF) return 0.0;
-        return parseDouble(box, label, 0.0, 1_000_000.0);
     }
 
     private static int parseInt(EditBox box, String label, int min, int max) {
@@ -503,10 +464,6 @@ public final class SpellEditorScreen extends Screen {
                 Component.literal(value ? "ON" : "OFF")
                         .withStyle(value ? ChatFormatting.GREEN : ChatFormatting.RED)
         );
-    }
-
-    private static Component modeLabel(String label, OverrideMode mode) {
-        return Component.literal(label + ": " + mode.displayName);
     }
 
     @Override
@@ -595,14 +552,20 @@ public final class SpellEditorScreen extends Screen {
 
     private void renderMageLabels(GuiGraphics graphics, int x) {
         int y = this.contentY + 6;
-        drawLabel(graphics, x, y, "Cast override mode"); y += this.rowGap;
-        drawLabel(graphics, x, y, castValueLabel()); y += this.rowGap;
-        drawLabel(graphics, x, y, "Mana override mode"); y += this.rowGap;
-        drawLabel(graphics, x, y, manaValueLabel()); y += this.rowGap;
-        drawLabel(graphics, x, y, "Cooldown override mode"); y += this.rowGap;
-        drawLabel(graphics, x, y, cooldownValueLabel());
+        drawLabel(graphics, x, y, "Cast time override");
+        y += this.rowGap;
 
-        int helpY = y + this.rowGap + 8;
+        Component original = Component.literal("Original (level 1): " + format(this.originalCastTimeLevelOne) + " ticks")
+                .withStyle(ChatFormatting.DARK_GRAY);
+        graphics.drawString(this.font, original, x, y, 0xFFFFFF);
+        y += this.rowGap;
+
+        drawLabel(graphics, x, y, "Value (ticks)");
+        y += this.rowGap;
+        drawLabel(graphics, x, y, "Multiplier");
+        y += this.rowGap;
+
+        int helpY = y + this.rowGap;
         if (this.counterspellButton != null) {
             helpY += FIELD_HEIGHT + 8;
         }
@@ -611,20 +574,21 @@ public final class SpellEditorScreen extends Screen {
         if (!CastTimeOverrides.balanceTweaksEnabled()) {
             graphics.drawWordWrap(
                     this.font,
-                    Component.literal("Balance Tweaks is OFF. Overrides can be saved, but will not apply until the module is enabled.")
+                    Component.literal("Balance Tweaks is OFF. The override can be saved, but will not apply until the module is enabled.")
                             .withStyle(ChatFormatting.YELLOW),
                     x,
                     helpY,
                     helpWidth,
                     0xFFFFFF
             );
-            helpY += 32;
+            helpY += 34;
         }
 
-        if (this.spell.getCastType().name().equals("INSTANT") && this.castMode != OverrideMode.OFF) {
+        if (this.spell.getCastType().name().equals("INSTANT")
+                && this.castControl.authority() != LinkedNumericOverrideControl.Authority.DEFAULT) {
             graphics.drawWordWrap(
                     this.font,
-                    Component.literal("Instant-spell cast delays are blocked unless Mage Additions explicitly supports that spell or allow_instant_spell_delays is enabled.")
+                    Component.literal("Instant-spell delays are blocked unless Mage Additions explicitly supports that spell or allow_instant_spell_delays is enabled.")
                             .withStyle(ChatFormatting.GRAY),
                     x,
                     helpY,
@@ -638,18 +602,6 @@ public final class SpellEditorScreen extends Screen {
         graphics.drawString(this.font, Component.literal(label).withStyle(ChatFormatting.GRAY), x, y, 0xFFFFFF);
     }
 
-    private String castValueLabel() {
-        return this.castMode == OverrideMode.MULTIPLIER ? "Cast multiplier" : "Cast time (ticks)";
-    }
-
-    private String manaValueLabel() {
-        return this.manaMode == OverrideMode.MULTIPLIER ? "Mana multiplier" : "Mana cost (points)";
-    }
-
-    private String cooldownValueLabel() {
-        return this.cooldownMode == OverrideMode.MULTIPLIER ? "Cooldown multiplier" : "Cooldown (seconds)";
-    }
-
     @Override
     public void onClose() {
         if (this.minecraft != null) {
@@ -658,42 +610,10 @@ public final class SpellEditorScreen extends Screen {
     }
 
     private static String format(double value) {
-        if (Math.abs(value - Math.rint(value)) < 0.000001) {
-            return Long.toString(Math.round(value));
-        }
-        return String.format(Locale.ROOT, "%.3f", value).replaceAll("0+$", "").replaceAll("\\.$", "");
+        return LinkedNumericOverrideControl.format(value);
     }
 
     private static String trim(String value, int length) {
         return value.length() <= length ? value : value.substring(0, Math.max(0, length - 3)) + "...";
-    }
-
-    private enum OverrideMode {
-        OFF("Off", "off"),
-        ABSOLUTE("Absolute", "absolute"),
-        MULTIPLIER("Multiplier", "multiplier");
-
-        private final String displayName;
-        private final String wireName;
-
-        OverrideMode(String displayName, String wireName) {
-            this.displayName = displayName;
-            this.wireName = wireName;
-        }
-
-        private OverrideMode next() {
-            return values()[(ordinal() + 1) % values().length];
-        }
-
-        private static OverrideMode from(MageAdditionsConfigEditor.RuleState state) {
-            if (state == null || !state.enabled()) return OFF;
-            return "multiplier".equalsIgnoreCase(state.mode()) ? MULTIPLIER : ABSOLUTE;
-        }
-
-        private static OverrideMode fromWire(String mode) {
-            if ("multiplier".equalsIgnoreCase(mode)) return MULTIPLIER;
-            if ("absolute".equalsIgnoreCase(mode)) return ABSOLUTE;
-            return OFF;
-        }
     }
 }

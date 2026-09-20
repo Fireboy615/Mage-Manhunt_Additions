@@ -73,24 +73,20 @@ public final class SpellConfigServerPayloadHandler {
                 return;
             }
 
-            // The server TOML is now live. Push the exact same Iron's values to
-            // every connected client immediately so scroll tooltips, generated
-            // scroll variants and client-side spell calculations do not stay stale.
+            // Keep every connected client aligned with the server's live Iron's values.
             SpellConfigSyncService.broadcast(spell);
 
-            SpellOverrideConfigService.SpellRules rules = new SpellOverrideConfigService.SpellRules(
-                    toRule(payload.castMode(), payload.castValue()),
-                    toRule(payload.manaMode(), payload.manaValue()),
-                    toRule(payload.cooldownMode(), payload.cooldownValue())
+            SpellOverrideConfigService.RuleState castRule = toRule(payload.castMode(), payload.castValue());
+            CastTimeOverrides.ReloadResult mageResult = SpellOverrideConfigService.saveCastTimeRule(
+                    spell.getSpellId(),
+                    castRule
             );
-
-            CastTimeOverrides.ReloadResult mageResult = SpellOverrideConfigService.saveSpellRules(spell.getSpellId(), rules);
             if (!mageResult.success()) {
                 context.reply(snapshot(
                         spell,
                         player,
                         false,
-                        "Iron's values changed, but Mage Additions override save failed: " + mageResult.error()
+                        "Iron's values changed, but Mage Additions cast-time save failed: " + mageResult.error()
                 ));
                 return;
             }
@@ -127,11 +123,7 @@ public final class SpellConfigServerPayloadHandler {
                 iron.cooldownSeconds(),
                 iron.allowCrafting(),
                 modeName(mage.castTime()),
-                mage.castTime().value(),
-                modeName(mage.mana()),
-                mage.mana().value(),
-                modeName(mage.cooldown()),
-                mage.cooldown().value()
+                mage.castTime().value()
         );
     }
 
@@ -151,10 +143,6 @@ public final class SpellConfigServerPayloadHandler {
                 1.0,
                 0.0,
                 true,
-                "off",
-                0.0,
-                "off",
-                0.0,
                 "off",
                 0.0
         );
@@ -188,10 +176,7 @@ public final class SpellConfigServerPayloadHandler {
         requireFiniteRange(payload.manaMultiplier(), 0.0, 1_000_000.0, "Mana multiplier");
         requireFiniteRange(payload.powerMultiplier(), 0.0, 1_000_000.0, "Power multiplier");
         requireFiniteRange(payload.cooldownSeconds(), 0.0, 3600.0, "Cooldown");
-
-        validateRule(payload.castMode(), payload.castValue(), "Cast override");
-        validateRule(payload.manaMode(), payload.manaValue(), "Mana override");
-        validateRule(payload.cooldownMode(), payload.cooldownValue(), "Cooldown override");
+        validateRule(payload.castMode(), payload.castValue(), "Cast time override");
     }
 
     private static void validateRule(String mode, double value, String label) {
