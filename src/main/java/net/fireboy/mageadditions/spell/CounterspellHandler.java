@@ -11,6 +11,8 @@ import io.redspace.ironsspellbooks.capabilities.magic.TargetEntityCastData;
 import io.redspace.ironsspellbooks.effect.MagicMobEffect;
 import io.redspace.ironsspellbooks.entity.mobs.AntiMagicSusceptible;
 import io.redspace.ironsspellbooks.entity.mobs.IMagicSummon;
+import io.redspace.ironsspellbooks.entity.spells.target_area.TargetedAreaEntity;
+import io.redspace.ironsspellbooks.spells.TargetedTargetAreaCastData;
 import io.redspace.ironsspellbooks.spells.ender.CounterspellSpell;
 import net.fireboy.mageadditions.MageAdditions;
 import net.fireboy.mageadditions.config.CounterspellConfig;
@@ -35,12 +37,19 @@ import java.util.Locale;
 /**
  * Counterspell behaviour replacement.
  *
- * CONE is the v0.2 forward-area version.
- * TARGETED uses Iron's own target-lock casting system (the same family of
- * mechanics used by targeted LONG spells): select a living anti-magic target
- * before casting, keep that target in MagicData, then counterspell it on finish.
+ * CONE     - forward-area Counterspell.
+ * TARGETED - one locked target, then Counterspell that target on cast finish.
+ * HASTE    - Haste-style target lock: choose one valid target, show a 3-block
+ *            target area that follows it, then Counterspell up to 5 valid
+ *            entities in that area when the cast finishes.
  */
 public final class CounterspellHandler {
+    /** Matches Iron's 3.14.8 HasteSpell target-area radius. */
+    private static final float HASTE_AREA_RADIUS = 3.0f;
+
+    /** Matches Iron's 3.14.8 HasteSpell maximum affected targets. */
+    private static final int HASTE_MAX_TARGETS = 5;
+
     private static volatile Settings settings = Settings.defaults();
 
     private CounterspellHandler() {}
@@ -65,33 +74,33 @@ public final class CounterspellHandler {
 
         if (targetMode == null) {
             MageAdditions.LOGGER.warn(
-                "Unknown counterspell target_mode '{}'; using 'all'",
-                raw.target_mode
+                    "Unknown counterspell target_mode '{}'; using 'all'",
+                    raw.target_mode
             );
             targetMode = TargetMode.ALL;
         }
 
         settings = new Settings(
-            raw.enabled,
-            mode,
-            castTimeTicks,
-            range,
-            aimAssist,
-            angle,
-            raw.require_line_of_sight,
-            targetMode,
-            raw.debug_particles
+                raw.enabled,
+                mode,
+                castTimeTicks,
+                range,
+                aimAssist,
+                angle,
+                raw.require_line_of_sight,
+                targetMode,
+                raw.debug_particles
         );
 
         MageAdditions.LOGGER.info(
-            "Counterspell patch: enabled={}, mode={}, castTime={}t, range={}, angle={} degrees, lineOfSight={}, targetMode={}",
-            raw.enabled,
-            mode.name().toLowerCase(Locale.ROOT),
-            castTimeTicks,
-            range,
-            angle,
-            raw.require_line_of_sight,
-            targetMode.name().toLowerCase(Locale.ROOT)
+                "Counterspell patch: enabled={}, mode={}, castTime={}t, range={}, angle={} degrees, lineOfSight={}, targetMode={}",
+                raw.enabled,
+                mode.name().toLowerCase(Locale.ROOT),
+                castTimeTicks,
+                range,
+                angle,
+                raw.require_line_of_sight,
+                targetMode.name().toLowerCase(Locale.ROOT)
         );
     }
 
@@ -99,9 +108,13 @@ public final class CounterspellHandler {
         return settings.enabled;
     }
 
+    /**
+     * Modes that use Iron's LONG target-lock cast flow.
+     * CounterspellSpellMixin calls this to swap Counterspell from INSTANT to LONG.
+     */
     public static boolean isTargetedMode() {
         Settings current = settings;
-        return current.enabled && current.mode == Mode.TARGETED;
+        return current.enabled && (current.mode == Mode.TARGETED || current.mode == Mode.HASTE);
     }
 
     public static boolean isTargetedCounterspell(AbstractSpell spell) {
@@ -109,47 +122,78 @@ public final class CounterspellHandler {
     }
 
     /**
-     * Makes targeted Counterspell a real LONG cast without enabling delayed
+     * Gives target-lock modes a real cast duration without enabling delayed
      * INSTANT behaviour globally. Generic per-spell cast_time_overrides can still
      * override this value afterward.
      */
     public static int getBaseCastTime(AbstractSpell spell, int originalTicks) {
         Settings current = settings;
-        if (current.enabled && current.mode == Mode.TARGETED && spell instanceof CounterspellSpell) {
+        if (current.enabled
+                && (current.mode == Mode.TARGETED || current.mode == Mode.HASTE)
+                && spell instanceof CounterspellSpell) {
             return current.castTimeTicks;
         }
         return originalTicks;
     }
 
     /**
-     * Uses Iron's built-in target acquisition and TargetEntityCastData. This is
-     * intentionally restricted to LivingEntity targets because that is the
-     * target-lock data type used by Iron's targeted spells.
+     * Acquires the initial Counterspell target using Iron's own targeted-cast
+     * helper. HASTE mode then replaces the simple TargetEntityCastData with the
+     * same TargetedTargetAreaCastData/TargetedAreaEntity combination used by
+     * Iron's Haste spell, giving us a visible area that follows the locked target.
      */
     public static boolean acquireTarget(
-        Level level,
-        LivingEntity caster,
-        MagicData playerMagicData,
-        AbstractSpell spell
+            Level level,
+            LivingEntity caster,
+            MagicData playerMagicData,
+            AbstractSpell spell
     ) {
         Settings current = settings;
-        if (!current.enabled || current.mode != Mode.TARGETED) {
+        if (!current.enabled || (current.mode != Mode.TARGETED && current.mode != Mode.HASTE)) {
             return true;
         }
 
         int range = Math.max(1, (int) Math.round(current.range));
         float aimAssist = (float) current.aimAssist;
 
-        return Utils.preCastTargetHelper(
-            level,
-            caster,
-            playerMagicData,
-            spell,
-            range,
-            aimAssist,
-            true,
-            target -> target != caster && Utils.validAntiMagicTarget(target)
+        boolean acquired = Utils.preCastTargetHelper(
+                level,
+                caster,
+                playerMagicData,
+                spell,
+                range,
+                aimAssist,
+                true,
+                target -> target != caster && Utils.validAntiMagicTarget(target)
         );
+
+        if (!acquired || current.mode != Mode.HASTE) {
+            return acquired;
+        }
+
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+
+        if (!(playerMagicData.getAdditionalCastData() instanceof TargetEntityCastData targetData)) {
+            return false;
+        }
+
+        LivingEntity target = targetData.getTarget(serverLevel);
+        if (target == null || target == caster || !Utils.validAntiMagicTarget(target)) {
+            return false;
+        }
+
+        TargetedAreaEntity area = TargetedAreaEntity.createTargetAreaEntity(
+                level,
+                target.position(),
+                HASTE_AREA_RADIUS,
+                Utils.packRGB(spell.getTargetingColor()),
+                target
+        );
+
+        playerMagicData.setAdditionalCastData(new TargetedTargetAreaCastData(target, area));
+        return true;
     }
 
     public static String describe() {
@@ -158,39 +202,50 @@ public final class CounterspellHandler {
             return "disabled";
         }
 
+        if (current.mode == Mode.HASTE) {
+            return String.format(
+                    Locale.ROOT,
+                    "haste-style / %.1f block target range / %.1f block area / max %d / %d ticks",
+                    current.range,
+                    HASTE_AREA_RADIUS,
+                    HASTE_MAX_TARGETS,
+                    current.castTimeTicks
+            );
+        }
+
         if (current.mode == Mode.TARGETED) {
             return String.format(
-                Locale.ROOT,
-                "targeted / %.1f blocks / %d ticks",
-                current.range,
-                current.castTimeTicks
+                    Locale.ROOT,
+                    "targeted / %.1f blocks / %d ticks",
+                    current.range,
+                    current.castTimeTicks
             );
         }
 
         return String.format(
-            Locale.ROOT,
-            "cone / %.1f blocks / %.1f degrees / %s",
-            current.range,
-            current.angleDegrees,
-            current.targetMode.name().toLowerCase(Locale.ROOT)
+                Locale.ROOT,
+                "cone / %.1f blocks / %.1f degrees / %s",
+                current.range,
+                current.angleDegrees,
+                current.targetMode.name().toLowerCase(Locale.ROOT)
         );
     }
 
     public static void cast(
-        Level level,
-        LivingEntity caster,
-        MagicData playerMagicData,
-        AbstractSpell spell
+            Level level,
+            LivingEntity caster,
+            MagicData playerMagicData,
+            AbstractSpell spell
     ) {
         Settings current = settings;
         if (!current.enabled) {
             return;
         }
 
-        if (current.mode == Mode.TARGETED) {
-            castTargeted(level, caster, playerMagicData);
-        } else {
-            castCone(level, caster, playerMagicData, current);
+        switch (current.mode) {
+            case TARGETED -> castTargeted(level, caster, playerMagicData);
+            case HASTE -> castHasteStyle(level, caster, playerMagicData, current);
+            case CONE -> castCone(level, caster, playerMagicData, current);
         }
 
         spell.playSound(spell.getCastFinishSound(), caster);
@@ -209,11 +264,60 @@ public final class CounterspellHandler {
         }
     }
 
+    /**
+     * Haste-style Counterspell: the locked entity is the moving centre of a
+     * 3-block area. On cast completion, up to five valid anti-magic entities in
+     * the area are counterspelled, nearest to the locked target first.
+     *
+     * require_line_of_sight still applies to each affected entity. This is a
+     * deliberate Counterspell safety rule even though vanilla Haste itself does
+     * not require LOS for every ally in its target area.
+     */
+    private static void castHasteStyle(
+            Level level,
+            LivingEntity caster,
+            MagicData playerMagicData,
+            Settings current
+    ) {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+
+        if (!(playerMagicData.getAdditionalCastData() instanceof TargetedTargetAreaCastData targetData)) {
+            return;
+        }
+
+        LivingEntity centreTarget = targetData.getTarget(serverLevel);
+        if (centreTarget == null || centreTarget.isRemoved() || !centreTarget.isAlive()) {
+            return;
+        }
+
+        Vec3 centre = centreTarget.position();
+        double radiusSquared = HASTE_AREA_RADIUS * HASTE_AREA_RADIUS;
+        AABB searchBox = centreTarget.getBoundingBox().inflate(HASTE_AREA_RADIUS);
+
+        List<Entity> targets = level.getEntities(
+                        caster,
+                        searchBox,
+                        target -> target != caster
+                                && Utils.validAntiMagicTarget(target)
+                                && target.distanceToSqr(centre) <= radiusSquared
+                                && (!current.requireLineOfSight || caster.hasLineOfSight(target))
+                ).stream()
+                .sorted(Comparator.comparingDouble(target -> target.distanceToSqr(centre)))
+                .limit(HASTE_MAX_TARGETS)
+                .toList();
+
+        for (Entity target : targets) {
+            applyCounterspell(caster, target, playerMagicData);
+        }
+    }
+
     private static void castCone(
-        Level level,
-        LivingEntity caster,
-        MagicData playerMagicData,
-        Settings current
+            Level level,
+            LivingEntity caster,
+            MagicData playerMagicData,
+            Settings current
     ) {
         Vec3 origin = caster.getEyePosition();
         Vec3 look = caster.getLookAngle().normalize();
@@ -264,24 +368,24 @@ public final class CounterspellHandler {
 
         return switch (mode) {
             case ALL -> candidates.stream()
-                .sorted(Comparator.comparingDouble(Candidate::distanceSquared))
-                .toList();
+                    .sorted(Comparator.comparingDouble(Candidate::distanceSquared))
+                    .toList();
             case NEAREST -> candidates.stream()
-                .min(Comparator.comparingDouble(Candidate::distanceSquared))
-                .map(List::of)
-                .orElseGet(List::of);
+                    .min(Comparator.comparingDouble(Candidate::distanceSquared))
+                    .map(List::of)
+                    .orElseGet(List::of);
             case CROSSHAIR -> candidates.stream()
-                .max(Comparator.comparingDouble(Candidate::dot)
-                    .thenComparing(Comparator.comparingDouble(Candidate::distanceSquared).reversed()))
-                .map(List::of)
-                .orElseGet(List::of);
+                    .max(Comparator.comparingDouble(Candidate::dot)
+                            .thenComparing(Comparator.comparingDouble(Candidate::distanceSquared).reversed()))
+                    .map(List::of)
+                    .orElseGet(List::of);
         };
     }
 
     private static void applyCounterspell(
-        LivingEntity caster,
-        Entity target,
-        MagicData playerMagicData
+            LivingEntity caster,
+            Entity target,
+            MagicData playerMagicData
     ) {
         if (NeoForge.EVENT_BUS.post(new CounterSpellEvent(caster, target)).isCanceled()) {
             return;
@@ -302,8 +406,8 @@ public final class CounterspellHandler {
         } else if (target instanceof ServerPlayer serverPlayer) {
             Utils.serverSideCancelCast(serverPlayer, true);
             MagicData.getPlayerMagicData(serverPlayer)
-                .getPlayerRecasts()
-                .removeAll(RecastResult.COUNTERSPELL);
+                    .getPlayerRecasts()
+                    .removeAll(RecastResult.COUNTERSPELL);
         } else if (target instanceof IMagicEntity magicEntity) {
             magicEntity.cancelCast();
         }
@@ -332,11 +436,11 @@ public final class CounterspellHandler {
     }
 
     private static void spawnConeOutline(
-        Level level,
-        Vec3 origin,
-        Vec3 look,
-        double range,
-        double fullAngleDegrees
+            Level level,
+            Vec3 origin,
+            Vec3 look,
+            double range,
+            double fullAngleDegrees
     ) {
         if (range <= 0.0) {
             return;
@@ -347,8 +451,8 @@ public final class CounterspellHandler {
         double cos = Math.cos(halfAngle);
 
         Vec3 referenceUp = Math.abs(look.y) > 0.95
-            ? new Vec3(1.0, 0.0, 0.0)
-            : new Vec3(0.0, 1.0, 0.0);
+                ? new Vec3(1.0, 0.0, 0.0)
+                : new Vec3(0.0, 1.0, 0.0);
         Vec3 right = look.cross(referenceUp).normalize();
         Vec3 up = right.cross(look).normalize();
 
@@ -363,7 +467,7 @@ public final class CounterspellHandler {
             for (int i = 0; i < ringPoints; i++) {
                 double theta = Math.PI * 2.0 * i / ringPoints;
                 Vec3 radial = right.scale(Math.cos(theta) * ringRadius)
-                    .add(up.scale(Math.sin(theta) * ringRadius));
+                        .add(up.scale(Math.sin(theta) * ringRadius));
                 spawnParticle(level, ringCenter.add(radial));
             }
         }
@@ -371,17 +475,17 @@ public final class CounterspellHandler {
 
     private static void spawnParticle(Level level, Vec3 pos) {
         MagicManager.spawnParticles(
-            level,
-            ParticleTypes.ENCHANT,
-            pos.x,
-            pos.y,
-            pos.z,
-            1,
-            0,
-            0,
-            0,
-            0,
-            false
+                level,
+                ParticleTypes.ENCHANT,
+                pos.x,
+                pos.y,
+                pos.z,
+                1,
+                0,
+                0,
+                0,
+                0,
+                false
         );
     }
 
@@ -394,7 +498,8 @@ public final class CounterspellHandler {
 
     private enum Mode {
         CONE,
-        TARGETED;
+        TARGETED,
+        HASTE;
 
         static Mode parse(String raw) {
             if (raw == null) {
@@ -426,22 +531,22 @@ public final class CounterspellHandler {
     }
 
     private record Candidate(
-        Entity entity,
-        Vec3 targetPoint,
-        double distanceSquared,
-        double dot
+            Entity entity,
+            Vec3 targetPoint,
+            double distanceSquared,
+            double dot
     ) {}
 
     private record Settings(
-        boolean enabled,
-        Mode mode,
-        int castTimeTicks,
-        double range,
-        double aimAssist,
-        double angleDegrees,
-        boolean requireLineOfSight,
-        TargetMode targetMode,
-        boolean debugParticles
+            boolean enabled,
+            Mode mode,
+            int castTimeTicks,
+            double range,
+            double aimAssist,
+            double angleDegrees,
+            boolean requireLineOfSight,
+            TargetMode targetMode,
+            boolean debugParticles
     ) {
         static Settings defaults() {
             return new Settings(false, Mode.CONE, 12, 6.0, 0.35, 90.0, true, TargetMode.ALL, false);

@@ -1,0 +1,18 @@
+{
+  "title": "BLTZ 15 — How to Play",
+  "sections": [
+    {
+      "heading": "The Blitz",
+      "body": [
+        "When the host starts the match, every player is released from the protected lobby and the blitz begins. Use these sections to write your full rules, objectives, looting guidance, and any server-specific information you want players to know.",
+        "This page is deliberately data-driven so you can rewrite it without touching Java code."
+      ]
+    },
+    {
+      "heading": "Teams",
+      "body": [
+        "In team games, your own teammates are highlighted for you in-game. Enemy players do not receive your teammate highlight list."
+      ]
+    }
+  ]
+}
