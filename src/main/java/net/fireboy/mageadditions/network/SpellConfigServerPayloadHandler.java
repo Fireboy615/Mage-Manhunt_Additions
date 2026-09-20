@@ -7,6 +7,7 @@ import io.redspace.ironsspellbooks.api.spells.SpellRarity;
 import net.fireboy.mageadditions.compat.irons.IronsSpellConfigBridge;
 import net.fireboy.mageadditions.config.CastTimeOverrides;
 import net.fireboy.mageadditions.config.SpellOverrideConfigService;
+import net.fireboy.mageadditions.spell.SpellTargetingDefaults;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
@@ -77,16 +78,27 @@ public final class SpellConfigServerPayloadHandler {
             SpellConfigSyncService.broadcast(spell);
 
             SpellOverrideConfigService.RuleState castRule = toRule(payload.castMode(), payload.castValue());
-            CastTimeOverrides.ReloadResult mageResult = SpellOverrideConfigService.saveCastTimeRule(
+            SpellOverrideConfigService.BehaviorState behavior = new SpellOverrideConfigService.BehaviorState(
+                    payload.mageOverridesEnabled(),
+                    payload.movementMode(),
+                    payload.movementMultiplier(),
+                    payload.maxHeightEnabled() ? payload.maxHeightAboveGround() : null,
+                    payload.hasLineOfSightOverride() ? payload.lineOfSightValue() : null,
+                    payload.hasMinCastDistance() ? payload.minCastDistance() : null,
+                    payload.hasMaxCastDistance() ? payload.maxCastDistance() : null,
+                    toRule(payload.rangeMode(), payload.rangeValue())
+            ).normalized();
+            CastTimeOverrides.ReloadResult mageResult = SpellOverrideConfigService.saveEditorRules(
                     spell.getSpellId(),
-                    castRule
+                    castRule,
+                    behavior
             );
             if (!mageResult.success()) {
                 context.reply(snapshot(
                         spell,
                         player,
                         false,
-                        "Iron's values changed, but Mage Additions cast-time save failed: " + mageResult.error()
+                        "Iron's values changed, but Mage Additions override save failed: " + mageResult.error()
                 ));
                 return;
             }
@@ -108,6 +120,14 @@ public final class SpellConfigServerPayloadHandler {
         SpellOverrideConfigService.SpellRules mage = SpellOverrideConfigService.readSpellRules(spell.getSpellId());
         IronsSpellConfigBridge.BackendInfo backend = IronsSpellConfigBridge.backendInfo();
 
+        boolean originalLineOfSight = SpellTargetingDefaults.DEFAULT_REQUIRE_LINE_OF_SIGHT;
+        double originalMinDistance = SpellTargetingDefaults.DEFAULT_MIN_DISTANCE;
+        double originalMaxDistance = SpellTargetingDefaults.originalMaxDistance(spell);
+        Boolean losOverride = mage.behavior().lineOfSightOverride();
+        Double minOverride = mage.behavior().minCastDistance();
+        Double maxOverride = mage.behavior().maxCastDistance();
+        SpellOverrideConfigService.RuleState rangeRule = mage.behavior().range();
+
         return new SpellConfigPayloads.Snapshot(
                 spell.getSpellResource(),
                 success,
@@ -122,8 +142,25 @@ public final class SpellConfigServerPayloadHandler {
                 iron.powerMultiplier(),
                 iron.cooldownSeconds(),
                 iron.allowCrafting(),
+                mage.behavior().enabled(),
                 modeName(mage.castTime()),
-                mage.castTime().value()
+                mage.castTime().value(),
+                modeName(rangeRule),
+                rangeRule.value(),
+                originalMaxDistance,
+                mage.behavior().movementMode(),
+                mage.behavior().movementMultiplier(),
+                mage.behavior().maxHeightAboveGround() != null,
+                mage.behavior().maxHeightAboveGround() == null ? 10.0 : mage.behavior().maxHeightAboveGround(),
+                losOverride != null,
+                losOverride == null ? originalLineOfSight : losOverride,
+                originalLineOfSight,
+                minOverride != null,
+                minOverride == null ? originalMinDistance : minOverride,
+                originalMinDistance,
+                maxOverride != null,
+                maxOverride == null ? originalMaxDistance : maxOverride,
+                originalMaxDistance
         );
     }
 
@@ -143,8 +180,25 @@ public final class SpellConfigServerPayloadHandler {
                 1.0,
                 0.0,
                 true,
+                false,
                 "off",
-                0.0
+                0.0,
+                "off",
+                0.0,
+                SpellTargetingDefaults.FALLBACK_MAX_DISTANCE,
+                "default",
+                0.5,
+                false,
+                10.0,
+                false,
+                SpellTargetingDefaults.DEFAULT_REQUIRE_LINE_OF_SIGHT,
+                SpellTargetingDefaults.DEFAULT_REQUIRE_LINE_OF_SIGHT,
+                false,
+                SpellTargetingDefaults.DEFAULT_MIN_DISTANCE,
+                SpellTargetingDefaults.DEFAULT_MIN_DISTANCE,
+                false,
+                SpellTargetingDefaults.FALLBACK_MAX_DISTANCE,
+                SpellTargetingDefaults.FALLBACK_MAX_DISTANCE
         );
     }
 
@@ -177,6 +231,22 @@ public final class SpellConfigServerPayloadHandler {
         requireFiniteRange(payload.powerMultiplier(), 0.0, 1_000_000.0, "Power multiplier");
         requireFiniteRange(payload.cooldownSeconds(), 0.0, 3600.0, "Cooldown");
         validateRule(payload.castMode(), payload.castValue(), "Cast time override");
+        validateRule(payload.rangeMode(), payload.rangeValue(), "Range override");
+        validateMovementMode(payload.movementMode());
+        requireFiniteRange(payload.movementMultiplier(), 0.0, 10.0, "Movement multiplier");
+        if (payload.maxHeightEnabled()) {
+            requireFiniteRange(payload.maxHeightAboveGround(), 0.0, 1_000_000.0, "Maximum height above ground");
+        }
+        if (payload.hasMinCastDistance()) {
+            requireFiniteRange(payload.minCastDistance(), 0.0, 1_000_000.0, "Minimum cast distance");
+        }
+        if (payload.hasMaxCastDistance()) {
+            requireFiniteRange(payload.maxCastDistance(), 0.0, 1_000_000.0, "Maximum cast distance");
+        }
+        if (payload.hasMinCastDistance() && payload.hasMaxCastDistance()
+                && payload.minCastDistance() > payload.maxCastDistance()) {
+            throw new IllegalArgumentException("Minimum cast distance cannot be greater than maximum cast distance.");
+        }
     }
 
     private static void validateRule(String mode, double value, String label) {
@@ -186,6 +256,14 @@ public final class SpellConfigServerPayloadHandler {
         }
         requireFiniteRange(value, 0.0, 1_000_000.0, label);
     }
+
+    private static void validateMovementMode(String mode) {
+        String value = mode == null ? "default" : mode.trim().toLowerCase(Locale.ROOT);
+        if (!value.equals("default") && !value.equals("normal") && !value.equals("slowed") && !value.equals("rooted")) {
+            throw new IllegalArgumentException("Movement mode must be default, normal, slowed, or rooted.");
+        }
+    }
+
 
     private static void requireFiniteRange(double value, double min, double max, String label) {
         if (!Double.isFinite(value) || value < min || value > max) {

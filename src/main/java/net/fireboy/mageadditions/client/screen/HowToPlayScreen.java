@@ -23,6 +23,8 @@ public final class HowToPlayScreen extends Screen {
     private PageData page;
     private int scroll;
     private int contentHeight;
+    private boolean scrollBarDragging;
+    private double scrollBarGrabOffset;
 
     public HowToPlayScreen(Screen parent, MinigameDefinition game) {
         super(Component.translatable("screen.mageadditions.how_to_play"));
@@ -44,13 +46,13 @@ public final class HowToPlayScreen extends Screen {
         int left = (width - panelWidth) / 2;
         int top = 48;
         int bottom = height - 42;
-        int contentWidth = panelWidth - 36;
+        int contentWidth = panelWidth - 48;
 
         graphics.drawCenteredString(font, page.title == null || page.title.isBlank() ? game.displayName() : Component.literal(page.title), width / 2, 20, 0xFFFFFF);
         graphics.drawCenteredString(font, Component.translatable("screen.mageadditions.how_to_play.scroll_hint"), width / 2, 35, 0x888888);
         graphics.fill(left, top, left + panelWidth, bottom, 0x77000000);
 
-        graphics.enableScissor(left + 8, top + 8, left + panelWidth - 8, bottom - 8);
+        graphics.enableScissor(left + 8, top + 8, left + panelWidth - 18, bottom - 8);
         int y = top + 18 - scroll;
         int x = left + 18;
 
@@ -85,7 +87,74 @@ public final class HowToPlayScreen extends Screen {
             scroll = maxScroll;
         }
 
+        renderScrollBar(graphics, left, top, left + panelWidth, bottom);
         super.render(graphics, mouseX, mouseY, partialTick);
+    }
+
+    private int viewportHeight() {
+        return Math.max(1, this.height - 42 - 48 - 36);
+    }
+
+    private int maxScroll() {
+        return Math.max(0, this.contentHeight - viewportHeight());
+    }
+
+    private int scrollTrackLeft(int panelRight) {
+        return panelRight - 13;
+    }
+
+    private int scrollTrackTop(int top) {
+        return top + 9;
+    }
+
+    private int scrollTrackBottom(int bottom) {
+        return bottom - 9;
+    }
+
+    private int scrollThumbHeight(int top, int bottom) {
+        int trackHeight = Math.max(1, scrollTrackBottom(bottom) - scrollTrackTop(top));
+        if (this.contentHeight <= 0) {
+            return trackHeight;
+        }
+        int height = Math.max(20, (int) Math.round(trackHeight * (viewportHeight() / (double) this.contentHeight)));
+        return Math.min(trackHeight, height);
+    }
+
+    private int scrollThumbTop(int top, int bottom) {
+        int max = maxScroll();
+        if (max <= 0) {
+            return scrollTrackTop(top);
+        }
+        int travel = Math.max(0, scrollTrackBottom(bottom) - scrollTrackTop(top) - scrollThumbHeight(top, bottom));
+        return scrollTrackTop(top) + (int) Math.round(travel * (this.scroll / (double) max));
+    }
+
+    private void setScrollFromThumbTop(double thumbTop, int top, int bottom) {
+        int max = maxScroll();
+        int travel = Math.max(0, scrollTrackBottom(bottom) - scrollTrackTop(top) - scrollThumbHeight(top, bottom));
+        if (max <= 0 || travel <= 0) {
+            this.scroll = 0;
+            return;
+        }
+        double fraction = (thumbTop - scrollTrackTop(top)) / travel;
+        fraction = Math.max(0.0, Math.min(1.0, fraction));
+        this.scroll = (int) Math.round(fraction * max);
+    }
+
+    private void renderScrollBar(GuiGraphics graphics, int left, int top, int right, int bottom) {
+        if (maxScroll() <= 0) {
+            return;
+        }
+
+        int trackLeft = scrollTrackLeft(right);
+        int trackTop = scrollTrackTop(top);
+        int trackBottom = scrollTrackBottom(bottom);
+        int thumbTop = scrollThumbTop(top, bottom);
+        int thumbHeight = scrollThumbHeight(top, bottom);
+
+        graphics.fill(trackLeft, trackTop, trackLeft + 6, trackBottom, 0x66202020);
+        graphics.fill(trackLeft, thumbTop, trackLeft + 6, thumbTop + thumbHeight,
+                this.scrollBarDragging ? 0xFFE0E0E0 : 0xCCAAAAAA);
     }
 
     private int drawImage(GuiGraphics graphics, SectionData section, int x, int y, int maxWidth) {
@@ -118,10 +187,55 @@ public final class HowToPlayScreen extends Screen {
     }
 
     @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (button == 0 && maxScroll() > 0) {
+            int panelWidth = Math.min(760, width - 40);
+            int left = (width - panelWidth) / 2;
+            int right = left + panelWidth;
+            int top = 48;
+            int bottom = height - 42;
+            int trackLeft = scrollTrackLeft(right);
+            int thumbTop = scrollThumbTop(top, bottom);
+            int thumbHeight = scrollThumbHeight(top, bottom);
+
+            if (mouseX >= trackLeft - 1 && mouseX < trackLeft + 7
+                    && mouseY >= scrollTrackTop(top) && mouseY < scrollTrackBottom(bottom)) {
+                if (mouseY >= thumbTop && mouseY < thumbTop + thumbHeight) {
+                    this.scrollBarGrabOffset = mouseY - thumbTop;
+                } else {
+                    this.scrollBarGrabOffset = thumbHeight / 2.0;
+                    setScrollFromThumbTop(mouseY - this.scrollBarGrabOffset, top, bottom);
+                }
+                this.scrollBarDragging = true;
+                return true;
+            }
+        }
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (button == 0 && this.scrollBarDragging) {
+            int top = 48;
+            int bottom = height - 42;
+            setScrollFromThumbTop(mouseY - this.scrollBarGrabOffset, top, bottom);
+            return true;
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0 && this.scrollBarDragging) {
+            this.scrollBarDragging = false;
+            return true;
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
+    }
+
+    @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        int viewport = Math.max(1, height - 42 - 48 - 36);
-        int maxScroll = Math.max(0, contentHeight - viewport);
-        scroll = Math.max(0, Math.min(maxScroll, scroll - (int) Math.round(scrollY * 28.0)));
+        this.scroll = Math.max(0, Math.min(maxScroll(), this.scroll - (int) Math.round(scrollY * 28.0)));
         return true;
     }
 

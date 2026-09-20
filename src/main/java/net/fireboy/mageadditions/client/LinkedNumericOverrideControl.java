@@ -23,7 +23,7 @@ public final class LinkedNumericOverrideControl {
 
     private final EditBox valueBox;
     private final EditBox multiplierBox;
-    private final double originalValue;
+    private double originalValue;
     private final double minValue;
     private final double maxValue;
     private final double minMultiplier;
@@ -90,6 +90,19 @@ public final class LinkedNumericOverrideControl {
             refreshActiveState();
             this.changedCallback.run();
         }
+    }
+
+    /**
+     * Updates the upstream/native value and then applies the persisted state.
+     * Useful for properties such as target range whose original value is only
+     * known after the authoritative server snapshot arrives.
+     */
+    public void applyStateWithOriginal(double originalValue, String mode, double storedValue) {
+        if (!Double.isFinite(originalValue)) {
+            originalValue = 0.0;
+        }
+        this.originalValue = Math.max(this.minValue, Math.min(this.maxValue, originalValue));
+        applyState(mode, storedValue);
     }
 
     public void resetToDefault() {

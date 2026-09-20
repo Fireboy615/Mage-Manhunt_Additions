@@ -47,8 +47,21 @@ public final class SpellConfigPayloads {
             double powerMultiplier,
             double cooldownSeconds,
             boolean allowCrafting,
+            boolean mageOverridesEnabled,
             String castMode,
-            double castValue
+            double castValue,
+            String rangeMode,
+            double rangeValue,
+            String movementMode,
+            double movementMultiplier,
+            boolean maxHeightEnabled,
+            double maxHeightAboveGround,
+            boolean hasLineOfSightOverride,
+            boolean lineOfSightValue,
+            boolean hasMinCastDistance,
+            double minCastDistance,
+            boolean hasMaxCastDistance,
+            double maxCastDistance
     ) implements CustomPacketPayload {
         public static final Type<Update> TYPE = new Type<>(
                 ResourceLocation.fromNamespaceAndPath(MageAdditions.MODID, "spell_config_update")
@@ -67,7 +80,20 @@ public final class SpellConfigPayloads {
                         buffer.readDouble(),
                         buffer.readDouble(),
                         buffer.readBoolean(),
+                        buffer.readBoolean(),
                         buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readBoolean(),
+                        buffer.readDouble(),
+                        buffer.readBoolean(),
+                        buffer.readBoolean(),
+                        buffer.readBoolean(),
+                        buffer.readDouble(),
+                        buffer.readBoolean(),
                         buffer.readDouble()
                 );
             }
@@ -83,8 +109,21 @@ public final class SpellConfigPayloads {
                 buffer.writeDouble(value.powerMultiplier());
                 buffer.writeDouble(value.cooldownSeconds());
                 buffer.writeBoolean(value.allowCrafting());
+                buffer.writeBoolean(value.mageOverridesEnabled());
                 buffer.writeUtf(value.castMode(), 32);
                 buffer.writeDouble(value.castValue());
+                buffer.writeUtf(value.rangeMode(), 32);
+                buffer.writeDouble(value.rangeValue());
+                buffer.writeUtf(value.movementMode(), 32);
+                buffer.writeDouble(value.movementMultiplier());
+                buffer.writeBoolean(value.maxHeightEnabled());
+                buffer.writeDouble(value.maxHeightAboveGround());
+                buffer.writeBoolean(value.hasLineOfSightOverride());
+                buffer.writeBoolean(value.lineOfSightValue());
+                buffer.writeBoolean(value.hasMinCastDistance());
+                buffer.writeDouble(value.minCastDistance());
+                buffer.writeBoolean(value.hasMaxCastDistance());
+                buffer.writeDouble(value.maxCastDistance());
             }
         };
 
@@ -108,8 +147,25 @@ public final class SpellConfigPayloads {
             double powerMultiplier,
             double cooldownSeconds,
             boolean allowCrafting,
+            boolean mageOverridesEnabled,
             String castMode,
-            double castValue
+            double castValue,
+            String rangeMode,
+            double rangeValue,
+            double originalTargetRange,
+            String movementMode,
+            double movementMultiplier,
+            boolean maxHeightEnabled,
+            double maxHeightAboveGround,
+            boolean hasLineOfSightOverride,
+            boolean lineOfSightValue,
+            boolean originalLineOfSight,
+            boolean hasMinCastDistance,
+            double minCastDistance,
+            double originalMinCastDistance,
+            boolean hasMaxCastDistance,
+            double maxCastDistance,
+            double originalMaxCastDistance
     ) implements CustomPacketPayload {
         public static final Type<Snapshot> TYPE = new Type<>(
                 ResourceLocation.fromNamespaceAndPath(MageAdditions.MODID, "spell_config_snapshot")
@@ -132,7 +188,24 @@ public final class SpellConfigPayloads {
                         buffer.readDouble(),
                         buffer.readDouble(),
                         buffer.readBoolean(),
+                        buffer.readBoolean(),
                         buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readDouble(),
+                        buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readBoolean(),
+                        buffer.readDouble(),
+                        buffer.readBoolean(),
+                        buffer.readBoolean(),
+                        buffer.readBoolean(),
+                        buffer.readBoolean(),
+                        buffer.readDouble(),
+                        buffer.readDouble(),
+                        buffer.readBoolean(),
+                        buffer.readDouble(),
                         buffer.readDouble()
                 );
             }
@@ -152,8 +225,25 @@ public final class SpellConfigPayloads {
                 buffer.writeDouble(value.powerMultiplier());
                 buffer.writeDouble(value.cooldownSeconds());
                 buffer.writeBoolean(value.allowCrafting());
+                buffer.writeBoolean(value.mageOverridesEnabled());
                 buffer.writeUtf(value.castMode(), 32);
                 buffer.writeDouble(value.castValue());
+                buffer.writeUtf(value.rangeMode(), 32);
+                buffer.writeDouble(value.rangeValue());
+                buffer.writeDouble(value.originalTargetRange());
+                buffer.writeUtf(value.movementMode(), 32);
+                buffer.writeDouble(value.movementMultiplier());
+                buffer.writeBoolean(value.maxHeightEnabled());
+                buffer.writeDouble(value.maxHeightAboveGround());
+                buffer.writeBoolean(value.hasLineOfSightOverride());
+                buffer.writeBoolean(value.lineOfSightValue());
+                buffer.writeBoolean(value.originalLineOfSight());
+                buffer.writeBoolean(value.hasMinCastDistance());
+                buffer.writeDouble(value.minCastDistance());
+                buffer.writeDouble(value.originalMinCastDistance());
+                buffer.writeBoolean(value.hasMaxCastDistance());
+                buffer.writeDouble(value.maxCastDistance());
+                buffer.writeDouble(value.originalMaxCastDistance());
             }
         };
 

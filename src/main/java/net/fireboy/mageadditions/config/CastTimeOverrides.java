@@ -81,6 +81,10 @@ public final class CastTimeOverrides {
                     ? compileRules(balance.cooldownRules, "cooldown")
                     : CompileResult.empty();
 
+            BehaviorCompileResult behaviors = modules.balance_tweaks
+                    ? compileBehaviorRules(balance.behaviorRules)
+                    : BehaviorCompileResult.empty();
+
             // The module switch is a true master switch. Even if the individual
             // Counterspell config says enabled=true, spell_reworks=false restores
             // Iron's original Counterspell behaviour.
@@ -95,6 +99,7 @@ public final class CastTimeOverrides {
                     Map.copyOf(castTime.rules),
                     Map.copyOf(mana.rules),
                     Map.copyOf(cooldown.rules),
+                    Map.copyOf(behaviors.rules),
                     balance.settings.allow_instant_spell_delays,
                     maxTicks,
                     modules.balance_tweaks,
@@ -103,7 +108,7 @@ public final class CastTimeOverrides {
                     modules.experimental
             );
 
-            int skipped = castTime.skipped + mana.skipped + cooldown.skipped;
+            int skipped = castTime.skipped + mana.skipped + cooldown.skipped + behaviors.skipped;
 
             MageAdditions.LOGGER.info(
                     "Loaded Mage Additions config from {}: modules [balance={}, reworks={}, customSpells={}, experimental={}], rules [{} cast-time, {} mana, {} cooldown] ({} skipped)",
@@ -156,7 +161,7 @@ public final class CastTimeOverrides {
         int baseEffectiveTicks = net.fireboy.mageadditions.spell.CounterspellHandler
                 .getBaseCastTime(spell, originalEffectiveTicks);
 
-        if (!current.balanceTweaksEnabled) {
+        if (!current.balanceTweaksEnabled || !spellOverridesEnabled(current, spell)) {
             return baseEffectiveTicks;
         }
 
@@ -187,7 +192,7 @@ public final class CastTimeOverrides {
      */
     public static int resolveManaCost(AbstractSpell spell, int originalManaCost) {
         Snapshot current = snapshot;
-        if (!current.balanceTweaksEnabled) {
+        if (!current.balanceTweaksEnabled || !spellOverridesEnabled(current, spell)) {
             return originalManaCost;
         }
 
@@ -210,7 +215,7 @@ public final class CastTimeOverrides {
      */
     public static int resolveBaseCooldownTicks(AbstractSpell spell, int originalCooldownTicks) {
         Snapshot current = snapshot;
-        if (!current.balanceTweaksEnabled) {
+        if (!current.balanceTweaksEnabled || !spellOverridesEnabled(current, spell)) {
             return originalCooldownTicks;
         }
 
@@ -225,6 +230,45 @@ public final class CastTimeOverrides {
         };
 
         return clampRounded(resultTicks, MAX_COOLDOWN_TICKS);
+    }
+
+    /** Returns the active Mage Additions behaviour overrides for a spell. */
+    public static BehaviorSettings behavior(AbstractSpell spell) {
+        Snapshot current = snapshot;
+        if (!current.balanceTweaksEnabled || spell == null) {
+            return BehaviorSettings.disabled();
+        }
+        BehaviorSettings settings = current.behaviorRules.get(spell.getSpellId());
+        return settings != null && settings.enabled() ? settings : BehaviorSettings.disabled();
+    }
+
+    private static boolean spellOverridesEnabled(Snapshot current, AbstractSpell spell) {
+        if (spell == null) return false;
+        BehaviorSettings settings = current.behaviorRules.get(spell.getSpellId());
+        return settings != null && settings.enabled();
+    }
+
+    /**
+     * Applies Mage Additions' generic target-range override. The original value
+     * is the range Iron's supplied to preCastTargetHelper for this spell.
+     */
+    public static double resolveTargetRange(AbstractSpell spell, double originalRange) {
+        if (spell == null || !Double.isFinite(originalRange) || originalRange < 0.0) {
+            return Double.isFinite(originalRange) ? Math.max(0.0, originalRange) : 0.0;
+        }
+
+        NumericOverride override = behavior(spell).rangeOverride();
+        if (!override.enabled()) {
+            return originalRange;
+        }
+
+        double resolved = override.mode() == NumericMode.MULTIPLIER
+                ? originalRange * override.value()
+                : override.value();
+        if (!Double.isFinite(resolved)) {
+            return originalRange;
+        }
+        return Math.max(0.0, Math.min(1_000_000.0, resolved));
     }
 
     /**
@@ -327,7 +371,8 @@ public final class CastTimeOverrides {
                     settings,
                     nonNullMap(balance.cast_time_overrides),
                     nonNullMap(balance.mana_cost_overrides),
-                    nonNullMap(balance.cooldown_overrides)
+                    nonNullMap(balance.cooldown_overrides),
+                    nonNullBehaviorMap(balance.spell_behavior_overrides)
             );
         }
 
@@ -340,7 +385,8 @@ public final class CastTimeOverrides {
                 settings,
                 nonNullMap(config.cast_time_overrides),
                 nonNullMap(config.mana_cost_overrides),
-                nonNullMap(config.cooldown_overrides)
+                nonNullMap(config.cooldown_overrides),
+                Map.of()
         );
     }
 
@@ -367,6 +413,12 @@ public final class CastTimeOverrides {
     }
 
     private static Map<String, CastTimeConfig.Rule> nonNullMap(Map<String, CastTimeConfig.Rule> source) {
+        return source != null ? source : new LinkedHashMap<>();
+    }
+
+    private static Map<String, CastTimeConfig.SpellBehavior> nonNullBehaviorMap(
+            Map<String, CastTimeConfig.SpellBehavior> source
+    ) {
         return source != null ? source : new LinkedHashMap<>();
     }
 
@@ -426,6 +478,91 @@ public final class CastTimeOverrides {
         }
 
         return new CompileResult(compiled, skipped);
+    }
+
+    private static BehaviorCompileResult compileBehaviorRules(
+            Map<String, CastTimeConfig.SpellBehavior> source
+    ) {
+        Map<String, BehaviorSettings> compiled = new LinkedHashMap<>();
+        int skipped = 0;
+        if (source == null) return BehaviorCompileResult.empty();
+
+        for (Map.Entry<String, CastTimeConfig.SpellBehavior> entry : source.entrySet()) {
+            if (ResourceLocation.tryParse(entry.getKey()) == null || entry.getValue() == null) {
+                skipped++;
+                continue;
+            }
+            CastTimeConfig.SpellBehavior raw = entry.getValue();
+            MovementMode movement = MovementMode.parse(raw.movement);
+            Double maxHeight = migratedMaxHeight(raw);
+            Boolean requireLineOfSight = migratedLineOfSight(raw);
+            NumericOverride rangeOverride = compileBehaviorNumericOverride(raw.range);
+            if (movement == null
+                    || !Double.isFinite(raw.movement_multiplier)
+                    || raw.movement_multiplier < 0.0 || raw.movement_multiplier > 10.0
+                    || !validOptionalDistance(maxHeight)
+                    || !validOptionalDistance(raw.min_cast_distance)
+                    || !validOptionalDistance(raw.max_cast_distance)
+                    || rangeOverride == null
+                    || (raw.min_cast_distance != null && raw.max_cast_distance != null
+                        && raw.min_cast_distance > raw.max_cast_distance)) {
+                MageAdditions.LOGGER.warn("Ignoring invalid spell behaviour rule for '{}'", entry.getKey());
+                skipped++;
+                continue;
+            }
+            boolean overridesEnabled = raw.enabled == null || raw.enabled;
+            compiled.put(entry.getKey(), new BehaviorSettings(
+                    overridesEnabled,
+                    movement,
+                    raw.movement_multiplier,
+                    maxHeight,
+                    requireLineOfSight,
+                    raw.min_cast_distance,
+                    raw.max_cast_distance,
+                    rangeOverride
+            ));
+        }
+        return new BehaviorCompileResult(compiled, skipped);
+    }
+
+    private static NumericOverride compileBehaviorNumericOverride(CastTimeConfig.Rule rule) {
+        if (rule == null || !rule.enabled) {
+            return NumericOverride.disabled();
+        }
+        NumericMode mode = NumericMode.parse(rule.mode);
+        if (mode == null || !Double.isFinite(rule.value) || rule.value < 0.0 || rule.value > 1_000_000.0) {
+            return null;
+        }
+        return new NumericOverride(true, mode, rule.value);
+    }
+
+    private static boolean validOptionalDistance(Double value) {
+        return value == null || (Double.isFinite(value) && value >= 0.0 && value <= 1_000_000.0);
+    }
+
+    private static Double migratedMaxHeight(CastTimeConfig.SpellBehavior raw) {
+        if (Boolean.FALSE.equals(raw.max_height_above_ground_enabled)) {
+            return null;
+        }
+        if (raw.max_height_above_ground != null) {
+            return raw.max_height_above_ground;
+        }
+        if ("blocked".equalsIgnoreCase(raw.airborne)) {
+            return 0.0;
+        }
+        if ("allowed".equalsIgnoreCase(raw.airborne)) {
+            return 1_000_000.0;
+        }
+        // No explicit height setting means disabled. This keeps ordinary jumping
+        // and airborne spells untouched until the user opts into the restriction.
+        return Boolean.TRUE.equals(raw.max_height_above_ground_enabled) ? 10.0 : null;
+    }
+
+    private static Boolean migratedLineOfSight(CastTimeConfig.SpellBehavior raw) {
+        if (raw.require_line_of_sight != null) {
+            return raw.require_line_of_sight;
+        }
+        return "required".equalsIgnoreCase(raw.line_of_sight) ? Boolean.TRUE : null;
     }
 
     /**
@@ -736,7 +873,7 @@ public final class CastTimeOverrides {
               // Turning a module off disables every feature inside that module,
               // without requiring you to delete its individual settings.
               "modules": {
-                // Per-spell cast time, mana cost and cooldown overrides.
+                // Per-spell balance values and extra casting/targeting behaviour.
                 "balance_tweaks": true,
 
                 // Rewrites of existing Iron's spells, such as Counterspell.
@@ -806,6 +943,27 @@ public final class CastTimeOverrides {
                   //   "enabled": true,
                   //   "mode": "absolute",
                   //   "value": 5.0
+                  // }
+                },
+
+                // EXTRA SPELL BEHAVIOUR
+                // These values are Mage Additions-only and default to leaving
+                // Iron's/addon behaviour untouched.
+                "spell_behavior_overrides": {
+                  // "irons_spellbooks:root": {
+                  //   "enabled": true,                     // per-spell Mage Additions master switch
+                  //   "movement": "slowed",               // default, normal, slowed, rooted
+                  //   "movement_multiplier": 0.5,         // used by slowed
+                  //   "max_height_above_ground_enabled": true,
+                  //   "max_height_above_ground": 10.0,    // blocks; disabled by default
+                  //   "range": {                          // generic target-helper range
+                  //     "enabled": true,
+                  //     "mode": "multiplier",            // absolute=blocks, multiplier=native range x value
+                  //     "value": 1.5
+                  //   },
+                  //   "require_line_of_sight": true,      // true or false; omit to inherit
+                  //   "min_cast_distance": 3.0,           // omit to inherit native minimum
+                  //   "max_cast_distance": 24.0           // omit to inherit native maximum
                   // }
                 }
               },
@@ -895,17 +1053,71 @@ public final class CastTimeOverrides {
         }
     }
 
+    public enum MovementMode {
+        DEFAULT, NORMAL, SLOWED, ROOTED;
+        static MovementMode parse(String raw) {
+            if (raw == null) return DEFAULT;
+            try { return valueOf(raw.trim().toUpperCase(Locale.ROOT)); }
+            catch (IllegalArgumentException ignored) { return null; }
+        }
+    }
+
+    public enum NumericMode {
+        ABSOLUTE, MULTIPLIER;
+
+        static NumericMode parse(String raw) {
+            if (raw == null) return ABSOLUTE;
+            try { return valueOf(raw.trim().toUpperCase(Locale.ROOT)); }
+            catch (IllegalArgumentException ignored) { return null; }
+        }
+    }
+
+    public record NumericOverride(boolean enabled, NumericMode mode, double value) {
+        public static NumericOverride disabled() {
+            return new NumericOverride(false, NumericMode.ABSOLUTE, 0.0);
+        }
+    }
+
+    public record BehaviorSettings(
+            boolean enabled,
+            MovementMode movementMode,
+            double movementMultiplier,
+            Double maxHeightAboveGround,
+            Boolean lineOfSightOverride,
+            Double minCastDistance,
+            Double maxCastDistance,
+            NumericOverride rangeOverride
+    ) {
+        /** Untouched spells have no Mage Additions overrides by default. */
+        public static BehaviorSettings defaults() {
+            return disabled();
+        }
+
+        /** No Mage Additions behaviour when the per-spell master switch is off. */
+        public static BehaviorSettings disabled() {
+            return new BehaviorSettings(
+                    false, MovementMode.DEFAULT, 0.5, null, null, null, null, NumericOverride.disabled()
+            );
+        }
+    }
+
+    private record BehaviorCompileResult(Map<String, BehaviorSettings> rules, int skipped) {
+        static BehaviorCompileResult empty() { return new BehaviorCompileResult(Map.of(), 0); }
+    }
+
     private record BalanceSource(
             CastTimeConfig.Settings settings,
             Map<String, CastTimeConfig.Rule> castTimeRules,
             Map<String, CastTimeConfig.Rule> manaRules,
-            Map<String, CastTimeConfig.Rule> cooldownRules
+            Map<String, CastTimeConfig.Rule> cooldownRules,
+            Map<String, CastTimeConfig.SpellBehavior> behaviorRules
     ) {}
 
     private record Snapshot(
             Map<String, CompiledRule> castTimeRules,
             Map<String, CompiledRule> manaCostRules,
             Map<String, CompiledRule> cooldownRules,
+            Map<String, BehaviorSettings> behaviorRules,
             boolean allowInstantSpellDelays,
             int maxCastTimeTicks,
             boolean balanceTweaksEnabled,
@@ -915,6 +1127,7 @@ public final class CastTimeOverrides {
     ) {
         static Snapshot defaults() {
             return new Snapshot(
+                    Map.of(),
                     Map.of(),
                     Map.of(),
                     Map.of(),

@@ -30,7 +30,8 @@ public final class SpellOverrideConfigService {
             return new SpellRules(
                     toState(balance.cast_time_overrides.get(spellId)),
                     toState(balance.mana_cost_overrides.get(spellId)),
-                    toState(balance.cooldown_overrides.get(spellId))
+                    toState(balance.cooldown_overrides.get(spellId)),
+                    toBehaviorState(balance.spell_behavior_overrides.get(spellId))
             );
         } catch (Exception ignored) {
             return SpellRules.defaults();
@@ -45,6 +46,27 @@ public final class SpellOverrideConfigService {
             updateRule(balance.cast_time_overrides, spellId, rules.castTime());
             updateRule(balance.mana_cost_overrides, spellId, rules.mana());
             updateRule(balance.cooldown_overrides, spellId, rules.cooldown());
+
+            writeTopLevelObject(document.raw, "balance_tweaks", GSON.toJson(balance));
+            return CastTimeOverrides.reload();
+        } catch (Exception exception) {
+            return new CastTimeOverrides.ReloadResult(false, 0, 0, rootMessage(exception), 0, 0);
+        }
+    }
+
+
+    /** Saves the fields currently exposed by the server-authoritative spell editor. */
+    public static CastTimeOverrides.ReloadResult saveEditorRules(
+            String spellId,
+            RuleState castTime,
+            BehaviorState behavior
+    ) {
+        try {
+            Document document = readDocument();
+            CastTimeConfig.BalanceTweaks balance = readBalance(document.root, document.config);
+
+            updateRule(balance.cast_time_overrides, spellId, castTime);
+            updateBehavior(balance.spell_behavior_overrides, spellId, behavior);
 
             writeTopLevelObject(document.raw, "balance_tweaks", GSON.toJson(balance));
             return CastTimeOverrides.reload();
@@ -111,10 +133,17 @@ public final class SpellOverrideConfigService {
         balance.cast_time_overrides = nonNullMap(balance.cast_time_overrides);
         balance.mana_cost_overrides = nonNullMap(balance.mana_cost_overrides);
         balance.cooldown_overrides = nonNullMap(balance.cooldown_overrides);
+        balance.spell_behavior_overrides = nonNullBehaviorMap(balance.spell_behavior_overrides);
         return balance;
     }
 
     private static Map<String, CastTimeConfig.Rule> nonNullMap(Map<String, CastTimeConfig.Rule> map) {
+        return map != null ? map : new LinkedHashMap<>();
+    }
+
+    private static Map<String, CastTimeConfig.SpellBehavior> nonNullBehaviorMap(
+            Map<String, CastTimeConfig.SpellBehavior> map
+    ) {
         return map != null ? map : new LinkedHashMap<>();
     }
 
@@ -123,6 +152,110 @@ public final class SpellOverrideConfigService {
             return RuleState.disabled();
         }
         return new RuleState(true, normalizeMode(rule.mode), rule.value);
+    }
+
+
+    private static BehaviorState toBehaviorState(CastTimeConfig.SpellBehavior behavior) {
+        if (behavior == null) {
+            return BehaviorState.defaults();
+        }
+
+        // Legacy behaviour entries predate the per-spell master switch, so keep
+        // those enabled. New untouched spells have no entry and therefore remain
+        // disabled by default.
+        boolean overridesEnabled = behavior.enabled == null || behavior.enabled;
+
+        boolean maxHeightEnabled = behavior.max_height_above_ground_enabled != null
+                ? behavior.max_height_above_ground_enabled
+                : behavior.max_height_above_ground != null
+                    || "blocked".equalsIgnoreCase(behavior.airborne)
+                    || "allowed".equalsIgnoreCase(behavior.airborne);
+        Double maxHeight = null;
+        if (maxHeightEnabled) {
+            maxHeight = behavior.max_height_above_ground;
+            if (maxHeight == null) {
+                if ("blocked".equalsIgnoreCase(behavior.airborne)) {
+                    maxHeight = 0.0;
+                } else if ("allowed".equalsIgnoreCase(behavior.airborne)) {
+                    maxHeight = 1_000_000.0;
+                } else {
+                    maxHeight = 10.0;
+                }
+            }
+        }
+
+        Boolean requireLineOfSight = behavior.require_line_of_sight;
+        if (requireLineOfSight == null && "required".equalsIgnoreCase(behavior.line_of_sight)) {
+            requireLineOfSight = Boolean.TRUE;
+        }
+
+        return new BehaviorState(
+                overridesEnabled,
+                normalizeMovement(behavior.movement),
+                finiteOrDefault(behavior.movement_multiplier, 0.5),
+                maxHeight == null ? null : (nullableDistance(maxHeight) == null ? 10.0 : maxHeight),
+                requireLineOfSight,
+                nullableDistance(behavior.min_cast_distance),
+                nullableDistance(behavior.max_cast_distance),
+                toState(behavior.range)
+        ).normalized();
+    }
+
+    private static void updateBehavior(
+            Map<String, CastTimeConfig.SpellBehavior> map,
+            String spellId,
+            BehaviorState state
+    ) {
+        BehaviorState safe = state == null ? BehaviorState.defaults() : state.normalized();
+        if (safe.isDefault()) {
+            map.remove(spellId);
+            return;
+        }
+
+        CastTimeConfig.SpellBehavior behavior = new CastTimeConfig.SpellBehavior();
+        behavior.enabled = safe.enabled();
+        behavior.movement = safe.movementMode();
+        behavior.movement_multiplier = safe.movementMultiplier();
+        behavior.max_height_above_ground_enabled = safe.maxHeightAboveGround() != null;
+        behavior.max_height_above_ground = safe.maxHeightAboveGround();
+        behavior.require_line_of_sight = safe.lineOfSightOverride();
+
+        // New saves no longer use the legacy mode strings.
+        behavior.airborne = "default";
+        behavior.line_of_sight = "default";
+
+        behavior.min_cast_distance = safe.minCastDistance();
+        behavior.max_cast_distance = safe.maxCastDistance();
+        behavior.range = toConfigRule(safe.range());
+        map.put(spellId, behavior);
+    }
+
+    private static CastTimeConfig.Rule toConfigRule(RuleState state) {
+        if (state == null || !state.enabled()) {
+            return null;
+        }
+        CastTimeConfig.Rule rule = new CastTimeConfig.Rule();
+        rule.enabled = true;
+        rule.mode = normalizeMode(state.mode());
+        rule.value = state.value();
+        return rule;
+    }
+
+    private static String normalizeMovement(String mode) {
+        if (mode == null) return "default";
+        return switch (mode.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "normal", "slowed", "rooted" -> mode.trim().toLowerCase(java.util.Locale.ROOT);
+            default -> "default";
+        };
+    }
+
+    private static double finiteOrDefault(double value, double fallback) {
+        return Double.isFinite(value) ? value : fallback;
+    }
+
+    private static Double nullableDistance(Double value) {
+        if (value == null || !Double.isFinite(value) || value < 0.0) return null;
+        return value;
     }
 
     private static void updateRule(Map<String, CastTimeConfig.Rule> map, String spellId, RuleState state) {
@@ -380,9 +513,85 @@ public final class SpellOverrideConfigService {
         }
     }
 
-    public record SpellRules(RuleState castTime, RuleState mana, RuleState cooldown) {
+    public record BehaviorState(
+            boolean enabled,
+            String movementMode,
+            double movementMultiplier,
+            Double maxHeightAboveGround,
+            Boolean lineOfSightOverride,
+            Double minCastDistance,
+            Double maxCastDistance,
+            RuleState range
+    ) {
+        public static BehaviorState defaults() {
+            return new BehaviorState(false, "default", 0.5, null, null, null, null, RuleState.disabled());
+        }
+
+        public BehaviorState normalized() {
+            double movement = Double.isFinite(movementMultiplier) ? movementMultiplier : 0.5;
+            movement = Math.max(0.0, Math.min(10.0, movement));
+
+            Double maxHeight = maxHeightAboveGround;
+            if (maxHeight != null) {
+                if (!Double.isFinite(maxHeight)) {
+                    maxHeight = 10.0;
+                }
+                maxHeight = Math.max(0.0, Math.min(1_000_000.0, maxHeight));
+            }
+
+            Double min = nullableDistance(minCastDistance);
+            Double max = nullableDistance(maxCastDistance);
+            if (min != null && max != null && min > max) {
+                double swap = min;
+                min = max;
+                max = swap;
+            }
+
+            RuleState rangeRule = normalizeRuleState(range);
+
+            return new BehaviorState(
+                    enabled,
+                    normalizeMovement(movementMode),
+                    movement,
+                    maxHeight,
+                    lineOfSightOverride,
+                    min,
+                    max,
+                    rangeRule
+            );
+        }
+
+        public boolean isDefault() {
+            BehaviorState value = normalized();
+            return !value.enabled
+                    && value.movementMode.equals("default")
+                    && value.maxHeightAboveGround == null
+                    && value.lineOfSightOverride == null
+                    && value.minCastDistance == null
+                    && value.maxCastDistance == null
+                    && !value.range.enabled();
+        }
+    }
+
+    private static RuleState normalizeRuleState(RuleState state) {
+        if (state == null || !state.enabled()) {
+            return RuleState.disabled();
+        }
+        double value = state.value();
+        if (!Double.isFinite(value) || value < 0.0) {
+            return RuleState.disabled();
+        }
+        return new RuleState(true, normalizeMode(state.mode()), value);
+    }
+
+    public record SpellRules(RuleState castTime, RuleState mana, RuleState cooldown, BehaviorState behavior) {
         public static SpellRules defaults() {
-            return new SpellRules(RuleState.disabled(), RuleState.disabled(), RuleState.disabled());
+            return new SpellRules(
+                    RuleState.disabled(),
+                    RuleState.disabled(),
+                    RuleState.disabled(),
+                    BehaviorState.defaults()
+            );
         }
     }
 

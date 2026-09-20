@@ -39,6 +39,8 @@ public final class SpellManagerScreen extends Screen {
     private AbstractSpell selectedSpell;
     private int scrollOffset;
     private Button editButton;
+    private boolean scrollBarDragging;
+    private double scrollBarGrabOffset;
 
     public SpellManagerScreen(Screen parent) {
         super(Component.literal("Mage Additions - Spell Manager"));
@@ -261,23 +263,63 @@ public final class SpellManagerScreen extends Screen {
         }
     }
 
-    private void renderScrollBar(GuiGraphics graphics, int left, int right, int top, int bottom) {
+    private int scrollTrackLeft() {
+        return listRight() - 6;
+    }
+
+    private int scrollTrackTop() {
+        return listTop() + 2;
+    }
+
+    private int scrollTrackBottom() {
+        return listBottom() - 2;
+    }
+
+    private int scrollThumbHeight() {
+        int trackHeight = Math.max(1, scrollTrackBottom() - scrollTrackTop());
+        if (this.filteredSpells.isEmpty()) {
+            return trackHeight;
+        }
+        int height = Math.max(18, (int) Math.round(trackHeight * (visibleRows() / (double) this.filteredSpells.size())));
+        return Math.min(trackHeight, height);
+    }
+
+    private int scrollThumbTop() {
         int max = maxScrollOffset();
         if (max <= 0) {
+            return scrollTrackTop();
+        }
+        int travel = Math.max(0, scrollTrackBottom() - scrollTrackTop() - scrollThumbHeight());
+        return scrollTrackTop() + (int) Math.round(travel * (this.scrollOffset / (double) max));
+    }
+
+    private void setScrollFromThumbTop(double thumbTop) {
+        int max = maxScrollOffset();
+        int travel = Math.max(0, scrollTrackBottom() - scrollTrackTop() - scrollThumbHeight());
+        if (max <= 0 || travel <= 0) {
+            this.scrollOffset = 0;
+            return;
+        }
+        double fraction = (thumbTop - scrollTrackTop()) / travel;
+        fraction = Math.max(0.0, Math.min(1.0, fraction));
+        this.scrollOffset = (int) Math.round(fraction * max);
+        clampScroll();
+    }
+
+    private void renderScrollBar(GuiGraphics graphics, int left, int right, int top, int bottom) {
+        if (maxScrollOffset() <= 0) {
             return;
         }
 
-        int trackLeft = right - 5;
-        int trackTop = top + 2;
-        int trackBottom = bottom - 2;
-        int trackHeight = Math.max(1, trackBottom - trackTop);
-        int thumbHeight = Math.max(18, (int) Math.round(trackHeight * (visibleRows() / (double) this.filteredSpells.size())));
-        thumbHeight = Math.min(trackHeight, thumbHeight);
-        int travel = Math.max(0, trackHeight - thumbHeight);
-        int thumbY = trackTop + (int) Math.round(travel * (this.scrollOffset / (double) max));
+        int trackLeft = scrollTrackLeft();
+        int trackTop = scrollTrackTop();
+        int trackBottom = scrollTrackBottom();
+        int thumbTop = scrollThumbTop();
+        int thumbHeight = scrollThumbHeight();
 
         graphics.fill(trackLeft, trackTop, right - 1, trackBottom, 0x66202020);
-        graphics.fill(trackLeft, thumbY, right - 1, thumbY + thumbHeight, 0xCCAAAAAA);
+        graphics.fill(trackLeft, thumbTop, right - 1, thumbTop + thumbHeight,
+                this.scrollBarDragging ? 0xFFE0E0E0 : 0xCCAAAAAA);
     }
 
     private void renderSelectedSpell(GuiGraphics graphics) {
@@ -386,15 +428,21 @@ public final class SpellManagerScreen extends Screen {
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (button == 0
-                && mouseX >= listRight() - 7
+                && mouseX >= scrollTrackLeft() - 1
                 && mouseX < listRight()
-                && mouseY >= listTop()
-                && mouseY < listBottom()
+                && mouseY >= scrollTrackTop()
+                && mouseY < scrollTrackBottom()
                 && maxScrollOffset() > 0) {
 
-            double fraction = (mouseY - listTop()) / Math.max(1.0, listBottom() - listTop());
-            this.scrollOffset = (int) Math.round(fraction * maxScrollOffset());
-            clampScroll();
+            int thumbTop = scrollThumbTop();
+            int thumbHeight = scrollThumbHeight();
+            if (mouseY >= thumbTop && mouseY < thumbTop + thumbHeight) {
+                this.scrollBarGrabOffset = mouseY - thumbTop;
+            } else {
+                this.scrollBarGrabOffset = thumbHeight / 2.0;
+                setScrollFromThumbTop(mouseY - this.scrollBarGrabOffset);
+            }
+            this.scrollBarDragging = true;
             return true;
         }
 
@@ -414,6 +462,25 @@ public final class SpellManagerScreen extends Screen {
         }
 
         return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+
+    @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (button == 0 && this.scrollBarDragging) {
+            setScrollFromThumbTop(mouseY - this.scrollBarGrabOffset);
+            return true;
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0 && this.scrollBarDragging) {
+            this.scrollBarDragging = false;
+            return true;
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
     }
 
     @Override

@@ -7,6 +7,7 @@ import net.fireboy.mageadditions.minigame.MinigameRegistry;
 import net.fireboy.mageadditions.minigame.MinigameServerEvents;
 import net.fireboy.mageadditions.network.MinigameNetwork;
 import net.fireboy.mageadditions.network.SpellConfigServerEvents;
+import net.fireboy.mageadditions.spell.SpellBehaviorServerEvents;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.common.NeoForge;
@@ -25,6 +26,7 @@ public final class MageAdditions {
 
         NeoForge.EVENT_BUS.addListener(ModCommands::register);
         NeoForge.EVENT_BUS.addListener(SpellConfigServerEvents::onPlayerLoggedIn);
+        NeoForge.EVENT_BUS.addListener(SpellBehaviorServerEvents::onServerTick);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onPlayerLoggedIn);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onPlayerLoggedOut);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onPlayerRespawn);

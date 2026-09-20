@@ -51,6 +51,69 @@ public final class CastTimeConfig {
         public Map<String, Rule> cast_time_overrides = new LinkedHashMap<>();
         public Map<String, Rule> mana_cost_overrides = new LinkedHashMap<>();
         public Map<String, Rule> cooldown_overrides = new LinkedHashMap<>();
+
+        /** Additional per-spell behaviour supplied by Mage Additions. */
+        public Map<String, SpellBehavior> spell_behavior_overrides = new LinkedHashMap<>();
+    }
+
+    /**
+     * Generic behaviour settings that Iron's does not expose in its normal spell
+     * config. Every field is intentionally self-contained so future versions can
+     * add more behaviour without changing the existing numeric override format.
+     */
+    public static final class SpellBehavior {
+        /**
+         * Per-spell master switch for all Mage Additions overrides. Null means
+         * a legacy behaviour entry from before this switch existed; those are
+         * treated as enabled so existing configured spells keep working. A spell
+         * with no behaviour entry is disabled by default.
+         */
+        public Boolean enabled = null;
+
+        /** default, normal, slowed, rooted */
+        public String movement = "default";
+
+        /** Used only when movement=slowed. 1.0 = normal movement speed. */
+        public double movement_multiplier = 0.5;
+
+        /**
+         * Whether the height-above-ground restriction is enabled. New spell
+         * overrides default to false; null is retained only for legacy configs
+         * created before the explicit toggle existed.
+         */
+        public Boolean max_height_above_ground_enabled = null;
+
+        /**
+         * Maximum distance above solid ground at which casting may start.
+         * Used only when max_height_above_ground_enabled is true.
+         */
+        public Double max_height_above_ground = null;
+
+        /**
+         * Null = inherit Iron's original behaviour. true = require LOS,
+         * false = allow targeting through blocks.
+         */
+        public Boolean require_line_of_sight = null;
+
+        /**
+         * Legacy fields kept only so configs produced by behavior batch 1 load
+         * cleanly. New saves migrate them into the fields above.
+         */
+        @Deprecated public String airborne = "default";
+        @Deprecated public String line_of_sight = "default";
+
+        /** Null = use the spell's original minimum target distance. */
+        public Double min_cast_distance = null;
+
+        /** Null = use the spell's original maximum target distance. */
+        public Double max_cast_distance = null;
+
+        /**
+         * Optional generic target-range override. This is applied to spells
+         * that use Iron's preCastTargetHelper path. Absolute values are blocks;
+         * multiplier values scale the native helper range supplied by the spell.
+         */
+        public Rule range = null;
     }
 
     public static final class SpellReworks {
