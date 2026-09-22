@@ -13,6 +13,7 @@
   },
   "client": [
     "MinecraftGlowMixin",
-    "CreativeModeTabsAccessor"
+    "CreativeModeTabsAccessor",
+    "WorldCreationUiStateMixin"
   ]
 }

@@ -42,6 +42,7 @@ public record StartMinigamePayload(
         buf.writeDouble(settings.finalBorderSize());
         buf.writeBoolean(settings.randomTeleport());
         buf.writeVarInt(settings.kitPreset().ordinal());
+        buf.writeUtf(settings.customEquipmentPreset() == null ? "" : settings.customEquipmentPreset(), 32);
     }
 
     public static MinigameSettings readSettings(RegistryFriendlyByteBuf buf) {
@@ -50,7 +51,8 @@ public record StartMinigamePayload(
             buf.readDouble(),
             buf.readDouble(),
             buf.readBoolean(),
-            MinigameSettings.KitPreset.fromOrdinal(buf.readVarInt())
+            MinigameSettings.KitPreset.fromOrdinal(buf.readVarInt()),
+            buf.readUtf(32)
         );
     }
 

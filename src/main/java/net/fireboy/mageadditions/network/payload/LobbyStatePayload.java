@@ -2,6 +2,7 @@ package net.fireboy.mageadditions.network.payload;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import net.fireboy.mageadditions.MageAdditions;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
@@ -33,6 +34,7 @@ public record LobbyStatePayload(
         buf.writeBoolean(payload.allReady());
         buf.writeVarInt(payload.roster().size());
         for (RosterEntry entry : payload.roster()) {
+            buf.writeUUID(entry.playerId());
             buf.writeUtf(entry.playerName(), 64);
             ResourceLocation.STREAM_CODEC.encode(buf, entry.teamId());
         }
@@ -45,7 +47,7 @@ public record LobbyStatePayload(
         int size = Math.min(buf.readVarInt(), 256);
         List<RosterEntry> roster = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
-            roster.add(new RosterEntry(buf.readUtf(64), ResourceLocation.STREAM_CODEC.decode(buf)));
+            roster.add(new RosterEntry(buf.readUUID(), buf.readUtf(64), ResourceLocation.STREAM_CODEC.decode(buf)));
         }
         return new LobbyStatePayload(gameId, onlinePlayers, allReady, roster);
     }
@@ -55,5 +57,5 @@ public record LobbyStatePayload(
         return TYPE;
     }
 
-    public record RosterEntry(String playerName, ResourceLocation teamId) {}
+    public record RosterEntry(UUID playerId, String playerName, ResourceLocation teamId) {}
 }

@@ -121,8 +121,7 @@ public abstract class AbstractSpellMixin {
             CastTimeOverrides.BehaviorSettings behavior
     ) {
         if (behavior.lineOfSightOverride() == null
-                && behavior.minCastDistance() == null
-                && behavior.maxCastDistance() == null) {
+                && behavior.minCastDistance() == null) {
             return true;
         }
 
@@ -140,12 +139,6 @@ public abstract class AbstractSpellMixin {
         Double minimum = behavior.minCastDistance();
         if (minimum != null && distance < minimum) {
             sendFailure(caster, "Target is too close for this spell.");
-            return false;
-        }
-
-        Double maximum = behavior.maxCastDistance();
-        if (maximum != null && distance > maximum) {
-            sendFailure(caster, "Target is too far away for this spell.");
             return false;
         }
 

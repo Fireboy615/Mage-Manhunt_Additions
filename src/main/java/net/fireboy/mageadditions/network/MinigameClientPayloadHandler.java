@@ -2,12 +2,13 @@ package net.fireboy.mageadditions.network;
 
 import net.fireboy.mageadditions.client.screen.HowToPlayScreen;
 import net.fireboy.mageadditions.client.screen.MatchControlScreen;
-import net.fireboy.mageadditions.client.screen.MinigameAdminScreen;
+import net.fireboy.mageadditions.client.screen.MinigameSetupScreen;
 import net.fireboy.mageadditions.client.screen.TeamSelectionScreen;
 import net.fireboy.mageadditions.client.state.ClientMinigameState;
 import net.fireboy.mageadditions.minigame.MinigameDefinition;
 import net.fireboy.mageadditions.minigame.MinigameRegistry;
 import net.fireboy.mageadditions.network.payload.CloseTeamSelectionPayload;
+import net.fireboy.mageadditions.network.payload.EquipmentPresetListPayload;
 import net.fireboy.mageadditions.network.payload.LobbyStatePayload;
 import net.fireboy.mageadditions.network.payload.OpenMatchControlPayload;
 import net.fireboy.mageadditions.network.payload.OpenMinigameMenuPayload;
@@ -20,12 +21,19 @@ public final class MinigameClientPayloadHandler {
     private MinigameClientPayloadHandler() {}
 
     public static void handle(OpenMinigameMenuPayload payload, IPayloadContext context) {
-        context.enqueueWork(() -> Minecraft.getInstance().setScreen(new MinigameAdminScreen()));
+        context.enqueueWork(() -> Minecraft.getInstance().setScreen(new MinigameSetupScreen()));
     }
 
 
     public static void handle(OpenMatchControlPayload payload, IPayloadContext context) {
-        context.enqueueWork(() -> Minecraft.getInstance().setScreen(new MatchControlScreen(payload)));
+        context.enqueueWork(() -> {
+            Minecraft minecraft = Minecraft.getInstance();
+            if (minecraft.screen instanceof MatchControlScreen screen) {
+                screen.applyState(payload);
+            } else {
+                minecraft.setScreen(new MatchControlScreen(payload));
+            }
+        });
     }
 
     public static void handle(OpenTeamSelectionPayload payload, IPayloadContext context) {
@@ -48,6 +56,16 @@ public final class MinigameClientPayloadHandler {
             ClientMinigameState.setLobbyState(payload);
             if (Minecraft.getInstance().screen instanceof TeamSelectionScreen screen) {
                 screen.applyState(payload);
+            }
+        });
+    }
+
+
+    public static void handle(EquipmentPresetListPayload payload, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            ClientMinigameState.setEquipmentPresets(payload.names());
+            if (Minecraft.getInstance().screen instanceof MinigameSetupScreen screen) {
+                screen.applyEquipmentPresets(payload.names());
             }
         });
     }

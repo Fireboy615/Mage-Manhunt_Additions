@@ -1,16 +1,16 @@
 package net.fireboy.mageadditions.client.screen;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import net.fireboy.mageadditions.client.state.ClientMinigameState;
 import net.fireboy.mageadditions.minigame.MinigameDefinition;
 import net.fireboy.mageadditions.minigame.MinigameRegistry;
 import net.fireboy.mageadditions.minigame.MinigameSettings;
+import net.fireboy.mageadditions.network.payload.AdminAssignTeamPayload;
 import net.fireboy.mageadditions.network.payload.CancelMinigamePayload;
 import net.fireboy.mageadditions.network.payload.LaunchMinigamePayload;
 import net.fireboy.mageadditions.network.payload.LobbyStatePayload;
+import net.fireboy.mageadditions.network.payload.RandomizeTeamsPayload;
 import net.fireboy.mageadditions.network.payload.SelectTeamPayload;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -21,30 +21,21 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.FormattedCharSequence;
 import net.neoforged.neoforge.network.PacketDistributor;
 
-/** Live waiting-room screen shown to every player during pre-game setup. */
+/** Live review/team page. OPs can directly reassign players and randomise teams. */
 public final class TeamSelectionScreen extends Screen {
-    private static final int PANEL_GAP = 14;
-
     private final MinigameDefinition game;
     private final boolean teamsEnabled;
     private final int teamCount;
     private final boolean canManage;
     private final MinigameSettings settings;
-    private final Map<ResourceLocation, Button> teamButtons = new LinkedHashMap<>();
-    private final Map<ResourceLocation, List<String>> roster = new LinkedHashMap<>();
 
+    private final List<LobbyStatePayload.RosterEntry> roster = new ArrayList<>();
     private ResourceLocation selectedTeam;
     private int onlinePlayers;
     private boolean allReady;
     private Button launchButton;
 
-    public TeamSelectionScreen(
-        MinigameDefinition game,
-        boolean teamsEnabled,
-        int teamCount,
-        boolean canManage,
-        MinigameSettings settings
-    ) {
+    public TeamSelectionScreen(MinigameDefinition game, boolean teamsEnabled, int teamCount, boolean canManage, MinigameSettings settings) {
         super(Component.translatable("screen.mageadditions.team_selection.title", game.displayName()));
         this.game = game;
         this.teamsEnabled = teamsEnabled;
@@ -55,237 +46,185 @@ public final class TeamSelectionScreen extends Screen {
 
     @Override
     protected void init() {
-        teamButtons.clear();
-        int totalWidth = Math.min(820, width - 34);
-        int left = (width - totalWidth) / 2;
-        int columnWidth = (totalWidth - PANEL_GAP) / 2;
-        int buttonAreaTop = 108;
-        int panelBottom = height - (canManage ? 48 : 24);
+        LobbyStatePayload cached = ClientMinigameState.lobbyState();
+        if (cached != null && cached.gameId().equals(game.id())) {
+            updateState(cached);
+        }
 
+        Layout layout = layout();
+        int teamButtonY = layout.top + 38;
         if (teamsEnabled) {
-            int buttonWidth = Math.min(154, (columnWidth - 18) / 2);
+            int cols = 2;
+            int gap = 6;
+            int buttonW = (layout.leftW - 20 - gap) / cols;
             for (int i = 0; i < teamCount; i++) {
                 MinigameDefinition.TeamDefinition team = game.teams().get(i);
-                int col = i % 2;
-                int row = i / 2;
-                int x = left + col * (buttonWidth + 8);
-                int y = buttonAreaTop + row * 30;
-                Button button = addRenderableWidget(Button.builder(team.displayName(), b -> chooseTeam(team.id()))
-                    .bounds(x, y, buttonWidth, 22)
-                    .build());
-                teamButtons.put(team.id(), button);
+                int x = layout.left + 10 + (i % cols) * (buttonW + gap);
+                int y = teamButtonY + (i / cols) * 26;
+                Component label = team.id().equals(selectedTeam) ? Component.literal("✓ ").append(team.displayName()) : team.displayName();
+                addRenderableWidget(Button.builder(label, b -> chooseTeam(team.id())).bounds(x, y, buttonW, 22).build());
             }
-        } else {
-            Button ffa = addRenderableWidget(Button.builder(Component.translatable("screen.mageadditions.team_selection.ffa_ready"), b -> {})
-                .bounds(left, buttonAreaTop, Math.min(260, columnWidth - 12), 22)
-                .build());
-            ffa.active = false;
-            teamButtons.put(MinigameRegistry.FFA_TEAM_ID, ffa);
+        }
+
+        int rosterY = teamButtonY + (teamsEnabled ? ((teamCount + 1) / 2) * 26 + 18 : 8);
+        int maxRows = Math.max(1, (layout.bottom - rosterY - 14) / 25);
+        for (int i = 0; i < Math.min(roster.size(), maxRows); i++) {
+            LobbyStatePayload.RosterEntry entry = roster.get(i);
+            int y = rosterY + i * 25;
+            if (canManage && teamsEnabled) {
+                int teamW = Math.min(120, layout.leftW / 3);
+                addRenderableWidget(Button.builder(teamName(entry.teamId()), b -> cyclePlayerTeam(entry))
+                    .bounds(layout.left + layout.leftW - teamW - 10, y - 5, teamW, 20).build());
+            }
+        }
+
+        if (canManage) {
+            int cx = layout.centerX - 70;
+            int cy = layout.top + 76;
+            if (teamsEnabled) {
+                addRenderableWidget(Button.builder(Component.translatable("screen.mageadditions.team_selection.randomise"), b ->
+                    PacketDistributor.sendToServer(RandomizeTeamsPayload.INSTANCE)
+                ).bounds(cx, cy, 140, 22).build());
+                cy += 48;
+            }
+            launchButton = addRenderableWidget(Button.builder(Component.translatable("screen.mageadditions.team_selection.start_match"), b ->
+                PacketDistributor.sendToServer(LaunchMinigamePayload.INSTANCE)
+            ).bounds(cx, cy, 140, 24).build());
+            launchButton.active = allReady;
+            addRenderableWidget(Button.builder(Component.translatable("gui.back"), b ->
+                PacketDistributor.sendToServer(CancelMinigamePayload.INSTANCE)
+            ).bounds(cx, cy + 34, 140, 22).build());
         }
 
         addRenderableWidget(Button.builder(Component.translatable("screen.mageadditions.how_to_play"), b ->
             Minecraft.getInstance().setScreen(new HowToPlayScreen(this, game))
-        ).bounds(left, panelBottom - 30, Math.min(180, columnWidth - 12), 22).build());
-
-        if (canManage) {
-            launchButton = addRenderableWidget(Button.builder(
-                Component.translatable("screen.mageadditions.team_selection.start_match"),
-                b -> PacketDistributor.sendToServer(LaunchMinigamePayload.INSTANCE)
-            ).bounds(width / 2 - 156, height - 34, 148, 22).build());
-            launchButton.active = allReady;
-            addRenderableWidget(Button.builder(
-                Component.translatable("screen.mageadditions.team_selection.cancel_lobby"),
-                b -> PacketDistributor.sendToServer(CancelMinigamePayload.INSTANCE)
-            ).bounds(width / 2 + 8, height - 34, 148, 22).build());
-        }
-
-        LobbyStatePayload cached = ClientMinigameState.lobbyState();
-        if (cached != null) {
-            applyState(cached);
-        } else {
-            refreshButtonLabels();
-        }
+        ).bounds(layout.right + 10, layout.bottom - 32, Math.min(170, layout.rightW - 20), 22).build());
     }
 
     private void chooseTeam(ResourceLocation teamId) {
         PacketDistributor.sendToServer(new SelectTeamPayload(game.id(), teamId));
     }
 
-    public void applyState(LobbyStatePayload state) {
-        if (!state.gameId().equals(game.id())) {
-            return;
+    private void cyclePlayerTeam(LobbyStatePayload.RosterEntry entry) {
+        ResourceLocation next = nextTeam(entry.teamId());
+        PacketDistributor.sendToServer(new AdminAssignTeamPayload(entry.playerId(), next));
+    }
+
+    private ResourceLocation nextTeam(ResourceLocation current) {
+        if (!teamsEnabled || teamCount <= 0) return MinigameRegistry.FFA_TEAM_ID;
+        for (int i = 0; i < teamCount; i++) {
+            if (game.teams().get(i).id().equals(current)) return game.teams().get((i + 1) % teamCount).id();
         }
+        return game.teams().get(0).id();
+    }
+
+    public void applyState(LobbyStatePayload state) {
+        if (!state.gameId().equals(game.id())) return;
+        updateState(state);
+        rebuildWidgets();
+    }
+
+    private void updateState(LobbyStatePayload state) {
         onlinePlayers = state.onlinePlayers();
         allReady = state.allReady();
         roster.clear();
-        for (LobbyStatePayload.RosterEntry entry : state.roster()) {
-            roster.computeIfAbsent(entry.teamId(), ignored -> new ArrayList<>()).add(entry.playerName());
-        }
-
+        roster.addAll(state.roster());
         Minecraft minecraft = Minecraft.getInstance();
         String localName = minecraft.player == null ? "" : minecraft.player.getGameProfile().getName();
         selectedTeam = null;
-        for (LobbyStatePayload.RosterEntry entry : state.roster()) {
+        for (LobbyStatePayload.RosterEntry entry : roster) {
             if (entry.playerName().equals(localName)) {
-                selectedTeam = entry.teamId();
+                selectedTeam = entry.teamId().equals(MinigameRegistry.UNASSIGNED_TEAM_ID) ? null : entry.teamId();
                 break;
             }
-        }
-
-        refreshButtonLabels();
-        if (launchButton != null) {
-            launchButton.active = allReady;
-        }
-    }
-
-    private void refreshButtonLabels() {
-        for (Map.Entry<ResourceLocation, Button> entry : teamButtons.entrySet()) {
-            ResourceLocation teamId = entry.getKey();
-            int count = roster.getOrDefault(teamId, List.of()).size();
-            Component base;
-            if (teamId.equals(MinigameRegistry.FFA_TEAM_ID)) {
-                base = Component.translatable("screen.mageadditions.team_selection.ffa_players", count);
-            } else {
-                MinigameDefinition.TeamDefinition team = game.team(teamId);
-                base = team == null ? Component.literal(teamId.getPath()) : Component.literal("").append(team.displayName()).append(" (" + count + ")");
-            }
-            if (teamId.equals(selectedTeam)) {
-                base = Component.literal("✓ ").append(base);
-            }
-            entry.getValue().setMessage(base);
         }
     }
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         renderBackground(graphics, mouseX, mouseY, partialTick);
+        Layout layout = layout();
+        graphics.fill(layout.left, layout.top, layout.left + layout.leftW, layout.bottom, 0x76000000);
+        graphics.fill(layout.right, layout.top, layout.right + layout.rightW, layout.bottom, 0x76000000);
 
-        int totalWidth = Math.min(820, width - 34);
-        int left = (width - totalWidth) / 2;
-        int top = 20;
-        int bodyTop = 68;
-        int columnWidth = (totalWidth - PANEL_GAP) / 2;
-        int right = left + columnWidth + PANEL_GAP;
-        int bottom = height - (canManage ? 48 : 24);
+        graphics.drawCenteredString(font, title, width / 2, 18, 0xFFFFFF);
+        graphics.drawString(font, Component.translatable("screen.mageadditions.team_selection.teams_header"), layout.left + 10, layout.top + 10, 0xFFFFFF, false);
+        graphics.drawString(font, Component.translatable("screen.mageadditions.team_selection.info_header"), layout.right + 10, layout.top + 10, 0xFFFFFF, false);
 
-        graphics.drawCenteredString(font, title, width / 2, top, 0xFFFFFF);
-        graphics.drawCenteredString(font, Component.translatable("screen.mageadditions.team_selection.subtitle"), width / 2, top + 18, 0xA0A0A0);
+        int rosterY = layout.top + 38 + (teamsEnabled ? ((teamCount + 1) / 2) * 26 + 18 : 8);
+        graphics.drawString(font, Component.translatable("screen.mageadditions.team_selection.ready_count", readyCount(), onlinePlayers), layout.left + 10, rosterY - 15, allReady ? 0x77FF77 : 0xFFD966, false);
+        int maxRows = Math.max(1, (layout.bottom - rosterY - 14) / 25);
+        for (int i = 0; i < Math.min(roster.size(), maxRows); i++) {
+            LobbyStatePayload.RosterEntry entry = roster.get(i);
+            int y = rosterY + i * 25;
+            graphics.drawString(font, entry.playerName(), layout.left + 12, y, 0xE0E0E0, false);
+            if (!canManage || !teamsEnabled) {
+                graphics.drawString(font, teamName(entry.teamId()), layout.left + layout.leftW - 12 - font.width(teamName(entry.teamId())), y, 0xA0A0A0, false);
+            }
+        }
 
-        graphics.fill(left - 8, bodyTop - 8, left + columnWidth, bottom, 0x66000000);
-        graphics.fill(right - 8, bodyTop - 8, right + columnWidth, bottom, 0x66000000);
-
-        Component ready = Component.translatable("screen.mageadditions.team_selection.ready_count", rosterSize(), onlinePlayers);
-        graphics.drawString(font, ready, left, bodyTop, allReady ? 0x77FF77 : 0xFFD966, false);
-        graphics.drawString(
-            font,
-            Component.translatable(teamsEnabled ? "screen.mageadditions.choose_team" : "screen.mageadditions.team_selection.ffa_mode"),
-            left,
-            bodyTop + 18,
-            0xFFFFFF,
-            false
-        );
-
-        int infoY = teamsEnabled ? 108 + ((teamCount + 1) / 2) * 30 + 8 : 144;
-        infoY = drawWrapped(graphics, game.description(), left, infoY, columnWidth - 12, 0xC8C8C8) + 8;
-        drawWrapped(
-            graphics,
-            Component.translatable(
-                "screen.mageadditions.team_selection.rules_summary",
-                settings.durationSeconds() <= 0 ? "∞" : formatTime(settings.durationSeconds()),
-                (int) settings.initialBorderSize(),
-                (int) settings.finalBorderSize(),
-                Component.translatable(settings.kitPreset().translationKey())
-            ),
-            left,
-            infoY,
-            columnWidth - 12,
-            0xFFD966
-        );
-
-        graphics.drawString(font, Component.translatable("screen.mageadditions.team_selection.live_roster"), right, bodyTop, 0x7FDBFF, false);
-        drawRoster(graphics, right, bodyTop + 22, columnWidth - 12);
+        int iy = layout.top + 38;
+        iy = drawInfoLine(graphics, Component.translatable("screen.mageadditions.settings.duration"), settings.durationSeconds() <= 0 ? "∞" : formatTime(settings.durationSeconds()), layout.right + 12, iy);
+        iy = drawInfoLine(graphics, Component.translatable("screen.mageadditions.settings.start_radius"), trimNumber(settings.initialBorderSize()), layout.right + 12, iy);
+        iy = drawInfoLine(graphics, Component.translatable("screen.mageadditions.settings.end_radius"), trimNumber(settings.finalBorderSize()), layout.right + 12, iy);
+        iy = drawInfoLine(graphics, Component.translatable("screen.mageadditions.team_selection.spawn"), settings.randomTeleport() ? "Random" : "Current", layout.right + 12, iy);
+        Component equipment = settings.hasCustomEquipmentPreset() ? Component.literal(settings.customEquipmentPreset()) : Component.translatable(settings.kitPreset().translationKey());
+        graphics.drawString(font, Component.translatable("screen.mageadditions.team_selection.equipment_info", equipment), layout.right + 12, iy, 0xFFD966, false);
+        iy += 28;
+        drawWrapped(graphics, game.description(), layout.right + 12, iy, layout.rightW - 24, 0xB8B8B8);
 
         if (canManage) {
-            graphics.drawCenteredString(
-                font,
-                Component.translatable(allReady ? "screen.mageadditions.team_selection.host_ready" : "screen.mageadditions.team_selection.host_waiting"),
-                width / 2,
-                height - 47,
-                allReady ? 0x77FF77 : 0xFFAA55
-            );
+            graphics.drawCenteredString(font, Component.translatable(allReady ? "screen.mageadditions.team_selection.host_ready" : "screen.mageadditions.team_selection.host_waiting"), layout.centerX, layout.bottom - 12, allReady ? 0x77FF77 : 0xFFAA55);
         }
-
-        for (var renderable : renderables) {
-            renderable.render(graphics, mouseX, mouseY, partialTick);
-        }
+        super.render(graphics, mouseX, mouseY, partialTick);
     }
 
-    private void drawRoster(GuiGraphics graphics, int x, int y, int width) {
-        List<ResourceLocation> ids = new ArrayList<>();
-        if (teamsEnabled) {
-            for (int i = 0; i < teamCount; i++) {
-                ids.add(game.teams().get(i).id());
-            }
-        } else {
-            ids.add(MinigameRegistry.FFA_TEAM_ID);
-        }
-
-        int columns = ids.size() > 4 ? 2 : 1;
-        int cellWidth = columns == 1 ? width : (width - 10) / 2;
-        int rows = (ids.size() + columns - 1) / columns;
-        int availableHeight = Math.max(100, height - y - (canManage ? 72 : 42));
-        int cellHeight = Math.max(44, availableHeight / Math.max(1, rows));
-
-        for (int i = 0; i < ids.size(); i++) {
-            ResourceLocation id = ids.get(i);
-            int col = columns == 1 ? 0 : i % 2;
-            int row = columns == 1 ? i : i / 2;
-            int cellX = x + col * (cellWidth + 10);
-            int cellY = y + row * cellHeight;
-            List<String> names = roster.getOrDefault(id, List.of());
-
-            Component header;
-            if (id.equals(MinigameRegistry.FFA_TEAM_ID)) {
-                header = Component.translatable("screen.mageadditions.team_selection.ffa_players", names.size());
-            } else {
-                MinigameDefinition.TeamDefinition team = game.team(id);
-                header = team == null ? Component.literal(id.getPath()) : Component.literal("").append(team.displayName()).append(" (" + names.size() + ")");
-            }
-            graphics.drawString(font, header, cellX, cellY, 0xFFFFFF, false);
-
-            String namesText = names.isEmpty() ? "—" : String.join(", ", names);
-            drawWrapped(graphics, Component.literal(namesText), cellX, cellY + 14, cellWidth - 4, 0xB8B8B8);
-        }
+    private int drawInfoLine(GuiGraphics graphics, Component label, String value, int x, int y) {
+        graphics.drawString(font, label, x, y, 0xA0A0A0, false);
+        graphics.drawString(font, value, x + Math.min(150, layout().rightW / 2), y, 0xFFFFFF, false);
+        return y + 22;
     }
 
-    private int rosterSize() {
-        int count = 0;
-        for (List<String> names : roster.values()) {
-            count += names.size();
-        }
-        return count;
-    }
-
-    private int drawWrapped(GuiGraphics graphics, Component text, int x, int y, int maxWidth, int color) {
-        List<FormattedCharSequence> lines = font.split(text, Math.max(40, maxWidth));
-        for (FormattedCharSequence line : lines) {
+    private int drawWrapped(GuiGraphics graphics, Component text, int x, int y, int width, int color) {
+        for (FormattedCharSequence line : font.split(text, width)) {
             graphics.drawString(font, line, x, y, color, false);
             y += font.lineHeight + 2;
         }
         return y;
     }
 
-    private static String formatTime(int seconds) {
-        return String.format("%d:%02d", seconds / 60, seconds % 60);
+    private int readyCount() {
+        if (!teamsEnabled) return onlinePlayers;
+        int count = 0;
+        for (LobbyStatePayload.RosterEntry entry : roster) {
+            if (!entry.teamId().equals(MinigameRegistry.UNASSIGNED_TEAM_ID)) count++;
+        }
+        return count;
     }
 
-    @Override
-    public boolean shouldCloseOnEsc() {
-        return false;
+    private Component teamName(ResourceLocation id) {
+        if (id == null || id.equals(MinigameRegistry.FFA_TEAM_ID)) return Component.translatable("screen.mageadditions.team_selection.ffa_short");
+        if (id.equals(MinigameRegistry.UNASSIGNED_TEAM_ID)) return Component.translatable("screen.mageadditions.team_selection.unassigned");
+        MinigameDefinition.TeamDefinition team = game.team(id);
+        return team == null ? Component.literal(id.getPath()) : team.displayName();
     }
 
-    @Override
-    public boolean isPauseScreen() {
-        return false;
+    private Layout layout() {
+        int total = Math.min(930, width - 28);
+        int centerW = canManage ? 160 : 20;
+        int side = (total - centerW - 24) / 2;
+        int left = (width - total) / 2;
+        int top = 52;
+        int bottom = height - 32;
+        int centerX = left + side + 12 + centerW / 2;
+        int right = left + side + 24 + centerW;
+        return new Layout(left, side, centerX, right, side, top, bottom);
     }
+
+    private static String formatTime(int seconds) { return String.format("%d:%02d", seconds / 60, seconds % 60); }
+    private static String trimNumber(double value) { return Math.rint(value) == value ? Long.toString((long)value) : String.format("%.1f", value); }
+
+    @Override public boolean isPauseScreen() { return false; }
+
+    private record Layout(int left, int leftW, int centerX, int right, int rightW, int top, int bottom) {}
 }

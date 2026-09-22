@@ -105,9 +105,6 @@ public final class CastTimeConfig {
         /** Null = use the spell's original minimum target distance. */
         public Double min_cast_distance = null;
 
-        /** Null = use the spell's original maximum target distance. */
-        public Double max_cast_distance = null;
-
         /**
          * Optional generic target-range override. This is applied to spells
          * that use Iron's preCastTargetHelper path. Absolute values are blocks;

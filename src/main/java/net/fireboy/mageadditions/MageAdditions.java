@@ -2,6 +2,7 @@ package net.fireboy.mageadditions;
 
 import com.mojang.logging.LogUtils;
 import net.fireboy.mageadditions.command.ModCommands;
+import net.fireboy.mageadditions.compat.irons.MagehunterBalanceEvents;
 import net.fireboy.mageadditions.config.CastTimeOverrides;
 import net.fireboy.mageadditions.minigame.MinigameRegistry;
 import net.fireboy.mageadditions.minigame.MinigameServerEvents;
@@ -25,6 +26,7 @@ public final class MageAdditions {
         modBus.addListener(MinigameNetwork::register);
 
         NeoForge.EVENT_BUS.addListener(ModCommands::register);
+        NeoForge.EVENT_BUS.addListener(MagehunterBalanceEvents::onEntityJoinLevel);
         NeoForge.EVENT_BUS.addListener(SpellConfigServerEvents::onPlayerLoggedIn);
         NeoForge.EVENT_BUS.addListener(SpellBehaviorServerEvents::onServerTick);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onPlayerLoggedIn);

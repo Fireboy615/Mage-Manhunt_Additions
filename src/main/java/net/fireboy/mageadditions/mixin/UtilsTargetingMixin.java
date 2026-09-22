@@ -57,11 +57,10 @@ public abstract class UtilsTargetingMixin {
         CastTimeOverrides.BehaviorSettings behavior = CastTimeOverrides.behavior(spell);
         Boolean lineOfSightOverride = behavior.lineOfSightOverride();
         Double minimum = behavior.minCastDistance();
-        Double maximum = behavior.maxCastDistance();
         boolean hasRangeOverride = behavior.rangeOverride().enabled();
 
         // No targeting override: preserve Iron's exact original implementation.
-        if (lineOfSightOverride == null && minimum == null && maximum == null && !hasRangeOverride) {
+        if (lineOfSightOverride == null && minimum == null && !hasRangeOverride) {
             return;
         }
 
@@ -69,13 +68,8 @@ public abstract class UtilsTargetingMixin {
                 ? SpellTargetingDefaults.DEFAULT_REQUIRE_LINE_OF_SIGHT
                 : lineOfSightOverride;
 
-        // Range changes the spell's actual target-acquisition distance. The
-        // separate maximum-cast-distance option is a hard cap and never extends
-        // range by itself.
+        // Range is the single upper-distance control for target acquisition.
         double searchRange = CastTimeOverrides.resolveTargetRange(spell, range);
-        if (maximum != null) {
-            searchRange = Math.min(searchRange, maximum);
-        }
         searchRange = Math.max(0.0, Math.min(1_000_000.0, searchRange));
 
         HitResult target = Utils.raycastForEntity(
@@ -110,12 +104,6 @@ public abstract class UtilsTargetingMixin {
                 cir.setReturnValue(false);
                 return;
             }
-            if (maximum != null && distance > maximum) {
-                failure(caster, "Target is too far away for this spell.", sendFailureMessage);
-                cir.setReturnValue(false);
-                return;
-            }
-
             playerMagicData.setAdditionalCastData(new TargetEntityCastData(livingTarget));
 
             if (caster instanceof ServerPlayer serverPlayer) {

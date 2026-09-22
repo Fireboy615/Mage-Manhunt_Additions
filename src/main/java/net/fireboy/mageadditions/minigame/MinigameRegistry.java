@@ -16,6 +16,7 @@ public final class MinigameRegistry {
     public static final ResourceLocation STANDARD_60_ID = id("standard_60");
     public static final ResourceLocation PRACTICE_ARENA_ID = id("practice_arena");
     public static final ResourceLocation FFA_TEAM_ID = id("ffa");
+    public static final ResourceLocation UNASSIGNED_TEAM_ID = id("unassigned");
 
     private static final List<MinigameDefinition.TeamDefinition> TEAM_COLOURS = List.of(
         team("red", "team.mageadditions.red", ChatFormatting.RED),

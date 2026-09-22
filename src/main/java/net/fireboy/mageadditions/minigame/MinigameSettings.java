@@ -1,15 +1,16 @@
 package net.fireboy.mageadditions.minigame;
 
-/** Per-lobby rule overrides. Defaults come from the selected minigame definition. */
+/** Per-lobby rule overrides. Border values exposed by Mage Additions are radii, not vanilla diameters. */
 public record MinigameSettings(
     int durationSeconds,
     double initialBorderSize,
     double finalBorderSize,
     boolean randomTeleport,
-    KitPreset kitPreset
+    KitPreset kitPreset,
+    String customEquipmentPreset
 ) {
     public static final int MAX_DURATION_SECONDS = 6 * 60 * 60;
-    public static final double MAX_BORDER_SIZE = 60_000_000.0;
+    public static final double MAX_BORDER_RADIUS = 30_000_000.0;
 
     public static MinigameSettings defaults(MinigameDefinition game) {
         return new MinigameSettings(
@@ -17,23 +18,29 @@ public record MinigameSettings(
             game.initialBorderSize(),
             game.finalBorderSize(),
             game.randomTeleport(),
-            KitPreset.MODE_DEFAULT
+            KitPreset.MODE_DEFAULT,
+            ""
         );
     }
 
     public MinigameSettings validated() {
         int duration = Math.max(0, Math.min(durationSeconds, MAX_DURATION_SECONDS));
-        double initial = clampBorder(initialBorderSize);
-        double ending = clampBorder(finalBorderSize);
+        double initial = clampBorderRadius(initialBorderSize);
+        double ending = clampBorderRadius(finalBorderSize);
         KitPreset kit = kitPreset == null ? KitPreset.MODE_DEFAULT : kitPreset;
-        return new MinigameSettings(duration, initial, ending, randomTeleport, kit);
+        String custom = EquipmentPresetStore.sanitizeName(customEquipmentPreset);
+        return new MinigameSettings(duration, initial, ending, randomTeleport, kit, custom);
     }
 
-    private static double clampBorder(double value) {
+    public boolean hasCustomEquipmentPreset() {
+        return customEquipmentPreset != null && !customEquipmentPreset.isBlank();
+    }
+
+    private static double clampBorderRadius(double value) {
         if (!Double.isFinite(value)) {
-            return 33.0;
+            return 16.5;
         }
-        return Math.max(1.0, Math.min(value, MAX_BORDER_SIZE));
+        return Math.max(0.5, Math.min(value, MAX_BORDER_RADIUS));
     }
 
     public enum KitPreset {

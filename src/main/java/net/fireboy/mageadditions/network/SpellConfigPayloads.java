@@ -59,9 +59,7 @@ public final class SpellConfigPayloads {
             boolean hasLineOfSightOverride,
             boolean lineOfSightValue,
             boolean hasMinCastDistance,
-            double minCastDistance,
-            boolean hasMaxCastDistance,
-            double maxCastDistance
+            double minCastDistance
     ) implements CustomPacketPayload {
         public static final Type<Update> TYPE = new Type<>(
                 ResourceLocation.fromNamespaceAndPath(MageAdditions.MODID, "spell_config_update")
@@ -92,8 +90,6 @@ public final class SpellConfigPayloads {
                         buffer.readBoolean(),
                         buffer.readBoolean(),
                         buffer.readBoolean(),
-                        buffer.readDouble(),
-                        buffer.readBoolean(),
                         buffer.readDouble()
                 );
             }
@@ -122,8 +118,6 @@ public final class SpellConfigPayloads {
                 buffer.writeBoolean(value.lineOfSightValue());
                 buffer.writeBoolean(value.hasMinCastDistance());
                 buffer.writeDouble(value.minCastDistance());
-                buffer.writeBoolean(value.hasMaxCastDistance());
-                buffer.writeDouble(value.maxCastDistance());
             }
         };
 
@@ -162,10 +156,7 @@ public final class SpellConfigPayloads {
             boolean originalLineOfSight,
             boolean hasMinCastDistance,
             double minCastDistance,
-            double originalMinCastDistance,
-            boolean hasMaxCastDistance,
-            double maxCastDistance,
-            double originalMaxCastDistance
+            double originalMinCastDistance
     ) implements CustomPacketPayload {
         public static final Type<Snapshot> TYPE = new Type<>(
                 ResourceLocation.fromNamespaceAndPath(MageAdditions.MODID, "spell_config_snapshot")
@@ -203,9 +194,6 @@ public final class SpellConfigPayloads {
                         buffer.readBoolean(),
                         buffer.readBoolean(),
                         buffer.readDouble(),
-                        buffer.readDouble(),
-                        buffer.readBoolean(),
-                        buffer.readDouble(),
                         buffer.readDouble()
                 );
             }
@@ -241,9 +229,6 @@ public final class SpellConfigPayloads {
                 buffer.writeBoolean(value.hasMinCastDistance());
                 buffer.writeDouble(value.minCastDistance());
                 buffer.writeDouble(value.originalMinCastDistance());
-                buffer.writeBoolean(value.hasMaxCastDistance());
-                buffer.writeDouble(value.maxCastDistance());
-                buffer.writeDouble(value.originalMaxCastDistance());
             }
         };
 

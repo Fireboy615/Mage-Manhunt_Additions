@@ -42,7 +42,7 @@ public final class MinigameSettingsScreen extends Screen {
 
         teleportButton = addRenderableWidget(Button.builder(teleportLabel(), b -> {
             working = new MinigameSettings(
-                working.durationSeconds(), working.initialBorderSize(), working.finalBorderSize(), !working.randomTeleport(), working.kitPreset()
+                working.durationSeconds(), working.initialBorderSize(), working.finalBorderSize(), !working.randomTeleport(), working.kitPreset(), working.customEquipmentPreset()
             );
             teleportButton.setMessage(teleportLabel());
         }).bounds(center - 110, y, 220, 22).build());
@@ -50,7 +50,7 @@ public final class MinigameSettingsScreen extends Screen {
         y += 30;
         kitButton = addRenderableWidget(Button.builder(kitLabel(), b -> {
             working = new MinigameSettings(
-                working.durationSeconds(), working.initialBorderSize(), working.finalBorderSize(), working.randomTeleport(), working.kitPreset().next()
+                working.durationSeconds(), working.initialBorderSize(), working.finalBorderSize(), working.randomTeleport(), working.kitPreset().next(), ""
             );
             kitButton.setMessage(kitLabel());
         }).bounds(center - 110, y, 220, 22).build());
@@ -89,7 +89,8 @@ public final class MinigameSettingsScreen extends Screen {
             initial,
             ending,
             working.randomTeleport(),
-            working.kitPreset()
+            working.kitPreset(),
+            working.customEquipmentPreset()
         ).validated();
         parent.setSettings(working);
         Minecraft.getInstance().setScreen(parent);

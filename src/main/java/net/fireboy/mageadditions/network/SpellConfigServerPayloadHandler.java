@@ -85,7 +85,6 @@ public final class SpellConfigServerPayloadHandler {
                     payload.maxHeightEnabled() ? payload.maxHeightAboveGround() : null,
                     payload.hasLineOfSightOverride() ? payload.lineOfSightValue() : null,
                     payload.hasMinCastDistance() ? payload.minCastDistance() : null,
-                    payload.hasMaxCastDistance() ? payload.maxCastDistance() : null,
                     toRule(payload.rangeMode(), payload.rangeValue())
             ).normalized();
             CastTimeOverrides.ReloadResult mageResult = SpellOverrideConfigService.saveEditorRules(
@@ -125,7 +124,6 @@ public final class SpellConfigServerPayloadHandler {
         double originalMaxDistance = SpellTargetingDefaults.originalMaxDistance(spell);
         Boolean losOverride = mage.behavior().lineOfSightOverride();
         Double minOverride = mage.behavior().minCastDistance();
-        Double maxOverride = mage.behavior().maxCastDistance();
         SpellOverrideConfigService.RuleState rangeRule = mage.behavior().range();
 
         return new SpellConfigPayloads.Snapshot(
@@ -157,10 +155,7 @@ public final class SpellConfigServerPayloadHandler {
                 originalLineOfSight,
                 minOverride != null,
                 minOverride == null ? originalMinDistance : minOverride,
-                originalMinDistance,
-                maxOverride != null,
-                maxOverride == null ? originalMaxDistance : maxOverride,
-                originalMaxDistance
+                originalMinDistance
         );
     }
 
@@ -195,10 +190,7 @@ public final class SpellConfigServerPayloadHandler {
                 SpellTargetingDefaults.DEFAULT_REQUIRE_LINE_OF_SIGHT,
                 false,
                 SpellTargetingDefaults.DEFAULT_MIN_DISTANCE,
-                SpellTargetingDefaults.DEFAULT_MIN_DISTANCE,
-                false,
-                SpellTargetingDefaults.FALLBACK_MAX_DISTANCE,
-                SpellTargetingDefaults.FALLBACK_MAX_DISTANCE
+                SpellTargetingDefaults.DEFAULT_MIN_DISTANCE
         );
     }
 
@@ -239,13 +231,6 @@ public final class SpellConfigServerPayloadHandler {
         }
         if (payload.hasMinCastDistance()) {
             requireFiniteRange(payload.minCastDistance(), 0.0, 1_000_000.0, "Minimum cast distance");
-        }
-        if (payload.hasMaxCastDistance()) {
-            requireFiniteRange(payload.maxCastDistance(), 0.0, 1_000_000.0, "Maximum cast distance");
-        }
-        if (payload.hasMinCastDistance() && payload.hasMaxCastDistance()
-                && payload.minCastDistance() > payload.maxCastDistance()) {
-            throw new IllegalArgumentException("Minimum cast distance cannot be greater than maximum cast distance.");
         }
     }
 

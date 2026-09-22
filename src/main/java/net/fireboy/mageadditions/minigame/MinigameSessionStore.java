@@ -38,15 +38,17 @@ final class MinigameSessionStore {
         properties.setProperty("teamsEnabled", Boolean.toString(snapshot.teamsEnabled()));
         properties.setProperty("teamCount", Integer.toString(snapshot.teamCount()));
         properties.setProperty("durationSeconds", Integer.toString(snapshot.settings().durationSeconds()));
-        properties.setProperty("initialBorderSize", Double.toString(snapshot.settings().initialBorderSize()));
-        properties.setProperty("finalBorderSize", Double.toString(snapshot.settings().finalBorderSize()));
+        properties.setProperty("initialBorderRadius", Double.toString(snapshot.settings().initialBorderSize()));
+        properties.setProperty("finalBorderRadius", Double.toString(snapshot.settings().finalBorderSize()));
         properties.setProperty("randomTeleport", Boolean.toString(snapshot.settings().randomTeleport()));
         properties.setProperty("kitPreset", snapshot.settings().kitPreset().name());
+        properties.setProperty("customEquipmentPreset", snapshot.settings().customEquipmentPreset() == null ? "" : snapshot.settings().customEquipmentPreset());
         properties.setProperty("matchTicksRemaining", Integer.toString(snapshot.matchTicksRemaining()));
-        properties.setProperty("currentBorderSize", Double.toString(snapshot.currentBorderSize()));
+        properties.setProperty("currentBorderRadius", Double.toString(snapshot.currentBorderSize()));
         properties.setProperty("teamSelections", encodeTeamSelections(snapshot.teamSelections()));
         properties.setProperty("participants", encodeUuids(snapshot.participants()));
         properties.setProperty("deadParticipants", encodeUuids(snapshot.deadParticipants()));
+        properties.setProperty("practicePromotedOps", encodeUuids(snapshot.practicePromotedOps()));
 
         Path file = stateFile(server);
         Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
@@ -89,13 +91,14 @@ final class MinigameSessionStore {
             int teamCount = Integer.parseInt(properties.getProperty("teamCount", "0"));
             MinigameSettings settings = new MinigameSettings(
                     Integer.parseInt(properties.getProperty("durationSeconds", "0")),
-                    Double.parseDouble(properties.getProperty("initialBorderSize", "151")),
-                    Double.parseDouble(properties.getProperty("finalBorderSize", "151")),
+                    readRadius(properties, "initialBorderRadius", "initialBorderSize", 151.0),
+                    readRadius(properties, "finalBorderRadius", "finalBorderSize", 151.0),
                     Boolean.parseBoolean(properties.getProperty("randomTeleport", "false")),
-                    MinigameSettings.KitPreset.valueOf(properties.getProperty("kitPreset", MinigameSettings.KitPreset.MODE_DEFAULT.name()))
+                    MinigameSettings.KitPreset.valueOf(properties.getProperty("kitPreset", MinigameSettings.KitPreset.MODE_DEFAULT.name())),
+                    properties.getProperty("customEquipmentPreset", "")
             ).validated();
             int matchTicksRemaining = Math.max(0, Integer.parseInt(properties.getProperty("matchTicksRemaining", "0")));
-            double currentBorderSize = Double.parseDouble(properties.getProperty("currentBorderSize", Double.toString(settings.initialBorderSize())));
+            double currentBorderSize = readRadius(properties, "currentBorderRadius", "currentBorderSize", settings.initialBorderSize());
 
             return Optional.of(new Snapshot(
                     phase,
@@ -108,7 +111,8 @@ final class MinigameSessionStore {
                     currentBorderSize,
                     decodeTeamSelections(properties.getProperty("teamSelections", "")),
                     decodeUuids(properties.getProperty("participants", "")),
-                    decodeUuids(properties.getProperty("deadParticipants", ""))
+                    decodeUuids(properties.getProperty("deadParticipants", "")),
+                    decodeUuids(properties.getProperty("practicePromotedOps", ""))
             ));
         } catch (Exception ex) {
             MageAdditions.LOGGER.warn("Could not load minigame recovery state from {}; starting without a recovered session", file, ex);
@@ -185,6 +189,18 @@ final class MinigameSessionStore {
         return decoded;
     }
 
+    private static double readRadius(Properties properties, String radiusKey, String legacySizeKey, double fallback) {
+        String radius = properties.getProperty(radiusKey);
+        if (radius != null) {
+            return Double.parseDouble(radius);
+        }
+        String legacy = properties.getProperty(legacySizeKey);
+        if (legacy != null) {
+            return Double.parseDouble(legacy) / 2.0;
+        }
+        return fallback;
+    }
+
     private static UUID parseUuid(String value) {
         try {
             return value == null || value.isBlank() ? null : UUID.fromString(value.trim());
@@ -204,12 +220,14 @@ final class MinigameSessionStore {
             double currentBorderSize,
             Map<UUID, ResourceLocation> teamSelections,
             Set<UUID> participants,
-            Set<UUID> deadParticipants
+            Set<UUID> deadParticipants,
+            Set<UUID> practicePromotedOps
     ) {
         Snapshot {
             teamSelections = Map.copyOf(teamSelections);
             participants = Set.copyOf(participants);
             deadParticipants = Set.copyOf(deadParticipants);
+            practicePromotedOps = Set.copyOf(practicePromotedOps);
         }
     }
 }

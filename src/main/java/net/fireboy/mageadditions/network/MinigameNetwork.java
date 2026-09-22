@@ -1,5 +1,12 @@
 package net.fireboy.mageadditions.network;
 
+import net.fireboy.mageadditions.network.payload.AdminAssignTeamPayload;
+import net.fireboy.mageadditions.network.payload.DeleteEquipmentPresetPayload;
+import net.fireboy.mageadditions.network.payload.EquipmentPresetListPayload;
+import net.fireboy.mageadditions.network.payload.RandomizeTeamsPayload;
+import net.fireboy.mageadditions.network.payload.RequestEquipmentPresetsPayload;
+import net.fireboy.mageadditions.network.payload.RequestMatchControlRefreshPayload;
+import net.fireboy.mageadditions.network.payload.SaveEquipmentPresetPayload;
 import net.fireboy.mageadditions.network.payload.CancelMinigamePayload;
 import net.fireboy.mageadditions.network.payload.CloseTeamSelectionPayload;
 import net.fireboy.mageadditions.network.payload.RevivePlayerPayload;
@@ -21,7 +28,7 @@ public final class MinigameNetwork {
     private MinigameNetwork() {}
 
     public static void register(RegisterPayloadHandlersEvent event) {
-        PayloadRegistrar registrar = event.registrar("4");
+        PayloadRegistrar registrar = event.registrar("5");
 
         registrar.playToServer(
                 OpenMinigameMenuRequestPayload.TYPE,
@@ -64,6 +71,36 @@ public final class MinigameNetwork {
                 RevivePlayerPayload.STREAM_CODEC,
                 MinigameServerPayloadHandler::handle
         );
+        registrar.playToServer(
+                AdminAssignTeamPayload.TYPE,
+                AdminAssignTeamPayload.STREAM_CODEC,
+                MinigameServerPayloadHandler::handle
+        );
+        registrar.playToServer(
+                RandomizeTeamsPayload.TYPE,
+                RandomizeTeamsPayload.STREAM_CODEC,
+                MinigameServerPayloadHandler::handle
+        );
+        registrar.playToServer(
+                RequestMatchControlRefreshPayload.TYPE,
+                RequestMatchControlRefreshPayload.STREAM_CODEC,
+                MinigameServerPayloadHandler::handle
+        );
+        registrar.playToServer(
+                RequestEquipmentPresetsPayload.TYPE,
+                RequestEquipmentPresetsPayload.STREAM_CODEC,
+                MinigameServerPayloadHandler::handle
+        );
+        registrar.playToServer(
+                SaveEquipmentPresetPayload.TYPE,
+                SaveEquipmentPresetPayload.STREAM_CODEC,
+                MinigameServerPayloadHandler::handle
+        );
+        registrar.playToServer(
+                DeleteEquipmentPresetPayload.TYPE,
+                DeleteEquipmentPresetPayload.STREAM_CODEC,
+                MinigameServerPayloadHandler::handle
+        );
 
         registrar.playToClient(
                 OpenMinigameMenuPayload.TYPE,
@@ -93,6 +130,11 @@ public final class MinigameNetwork {
         registrar.playToClient(
                 TeamOutlinePayload.TYPE,
                 TeamOutlinePayload.STREAM_CODEC,
+                MinigameClientPayloadHandler::handle
+        );
+        registrar.playToClient(
+                EquipmentPresetListPayload.TYPE,
+                EquipmentPresetListPayload.STREAM_CODEC,
                 MinigameClientPayloadHandler::handle
         );
     }

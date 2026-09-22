@@ -23,8 +23,8 @@ public final class HowToPlayScreen extends Screen {
     private PageData page;
     private int scroll;
     private int contentHeight;
-    private boolean scrollBarDragging;
-    private double scrollBarGrabOffset;
+    private boolean draggingScrollbar;
+    private int scrollbarDragOffset;
 
     public HowToPlayScreen(Screen parent, MinigameDefinition game) {
         super(Component.translatable("screen.mageadditions.how_to_play"));
@@ -41,18 +41,21 @@ public final class HowToPlayScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(graphics, mouseX, mouseY, partialTick);
+        // Do not use Screen#renderBackground here: in-game it applies Minecraft's menu blur.
+        // A translucent overlay keeps the world visible and sharp behind the instructions.
+        graphics.fill(0, 0, width, height, 0x88000000);
         int panelWidth = Math.min(760, width - 40);
         int left = (width - panelWidth) / 2;
         int top = 48;
         int bottom = height - 42;
-        int contentWidth = panelWidth - 48;
+        int contentWidth = panelWidth - 52;
 
         graphics.drawCenteredString(font, page.title == null || page.title.isBlank() ? game.displayName() : Component.literal(page.title), width / 2, 20, 0xFFFFFF);
         graphics.drawCenteredString(font, Component.translatable("screen.mageadditions.how_to_play.scroll_hint"), width / 2, 35, 0x888888);
         graphics.fill(left, top, left + panelWidth, bottom, 0x77000000);
 
-        graphics.enableScissor(left + 8, top + 8, left + panelWidth - 18, bottom - 8);
+        int scrollbarX = left + panelWidth - 14;
+        graphics.enableScissor(left + 8, top + 8, scrollbarX - 6, bottom - 8);
         int y = top + 18 - scroll;
         int x = left + 18;
 
@@ -87,74 +90,8 @@ public final class HowToPlayScreen extends Screen {
             scroll = maxScroll;
         }
 
-        renderScrollBar(graphics, left, top, left + panelWidth, bottom);
+        drawScrollbar(graphics, scrollbarX, top + 8, bottom - 8, viewport, maxScroll, mouseX, mouseY);
         super.render(graphics, mouseX, mouseY, partialTick);
-    }
-
-    private int viewportHeight() {
-        return Math.max(1, this.height - 42 - 48 - 36);
-    }
-
-    private int maxScroll() {
-        return Math.max(0, this.contentHeight - viewportHeight());
-    }
-
-    private int scrollTrackLeft(int panelRight) {
-        return panelRight - 13;
-    }
-
-    private int scrollTrackTop(int top) {
-        return top + 9;
-    }
-
-    private int scrollTrackBottom(int bottom) {
-        return bottom - 9;
-    }
-
-    private int scrollThumbHeight(int top, int bottom) {
-        int trackHeight = Math.max(1, scrollTrackBottom(bottom) - scrollTrackTop(top));
-        if (this.contentHeight <= 0) {
-            return trackHeight;
-        }
-        int height = Math.max(20, (int) Math.round(trackHeight * (viewportHeight() / (double) this.contentHeight)));
-        return Math.min(trackHeight, height);
-    }
-
-    private int scrollThumbTop(int top, int bottom) {
-        int max = maxScroll();
-        if (max <= 0) {
-            return scrollTrackTop(top);
-        }
-        int travel = Math.max(0, scrollTrackBottom(bottom) - scrollTrackTop(top) - scrollThumbHeight(top, bottom));
-        return scrollTrackTop(top) + (int) Math.round(travel * (this.scroll / (double) max));
-    }
-
-    private void setScrollFromThumbTop(double thumbTop, int top, int bottom) {
-        int max = maxScroll();
-        int travel = Math.max(0, scrollTrackBottom(bottom) - scrollTrackTop(top) - scrollThumbHeight(top, bottom));
-        if (max <= 0 || travel <= 0) {
-            this.scroll = 0;
-            return;
-        }
-        double fraction = (thumbTop - scrollTrackTop(top)) / travel;
-        fraction = Math.max(0.0, Math.min(1.0, fraction));
-        this.scroll = (int) Math.round(fraction * max);
-    }
-
-    private void renderScrollBar(GuiGraphics graphics, int left, int top, int right, int bottom) {
-        if (maxScroll() <= 0) {
-            return;
-        }
-
-        int trackLeft = scrollTrackLeft(right);
-        int trackTop = scrollTrackTop(top);
-        int trackBottom = scrollTrackBottom(bottom);
-        int thumbTop = scrollThumbTop(top, bottom);
-        int thumbHeight = scrollThumbHeight(top, bottom);
-
-        graphics.fill(trackLeft, trackTop, trackLeft + 6, trackBottom, 0x66202020);
-        graphics.fill(trackLeft, thumbTop, trackLeft + 6, thumbTop + thumbHeight,
-                this.scrollBarDragging ? 0xFFE0E0E0 : 0xCCAAAAAA);
     }
 
     private int drawImage(GuiGraphics graphics, SectionData section, int x, int y, int maxWidth) {
@@ -187,26 +124,27 @@ public final class HowToPlayScreen extends Screen {
     }
 
     @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button == 0 && maxScroll() > 0) {
-            int panelWidth = Math.min(760, width - 40);
-            int left = (width - panelWidth) / 2;
-            int right = left + panelWidth;
-            int top = 48;
-            int bottom = height - 42;
-            int trackLeft = scrollTrackLeft(right);
-            int thumbTop = scrollThumbTop(top, bottom);
-            int thumbHeight = scrollThumbHeight(top, bottom);
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        int viewport = Math.max(1, height - 42 - 48 - 36);
+        int maxScroll = Math.max(0, contentHeight - viewport);
+        scroll = Math.max(0, Math.min(maxScroll, scroll - (int) Math.round(scrollY * 28.0)));
+        return true;
+    }
 
-            if (mouseX >= trackLeft - 1 && mouseX < trackLeft + 7
-                    && mouseY >= scrollTrackTop(top) && mouseY < scrollTrackBottom(bottom)) {
-                if (mouseY >= thumbTop && mouseY < thumbTop + thumbHeight) {
-                    this.scrollBarGrabOffset = mouseY - thumbTop;
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (button == 0) {
+            ScrollbarGeometry bar = scrollbarGeometry();
+            if (bar != null && mouseX >= bar.x && mouseX < bar.x + bar.width
+                && mouseY >= bar.trackTop && mouseY < bar.trackBottom) {
+                if (mouseY >= bar.thumbTop && mouseY < bar.thumbTop + bar.thumbHeight) {
+                    draggingScrollbar = true;
+                    scrollbarDragOffset = (int) mouseY - bar.thumbTop;
                 } else {
-                    this.scrollBarGrabOffset = thumbHeight / 2.0;
-                    setScrollFromThumbTop(mouseY - this.scrollBarGrabOffset, top, bottom);
+                    setScrollFromThumbTop((int) mouseY - bar.thumbHeight / 2, bar);
+                    draggingScrollbar = true;
+                    scrollbarDragOffset = bar.thumbHeight / 2;
                 }
-                this.scrollBarDragging = true;
                 return true;
             }
         }
@@ -215,10 +153,11 @@ public final class HowToPlayScreen extends Screen {
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
-        if (button == 0 && this.scrollBarDragging) {
-            int top = 48;
-            int bottom = height - 42;
-            setScrollFromThumbTop(mouseY - this.scrollBarGrabOffset, top, bottom);
+        if (button == 0 && draggingScrollbar) {
+            ScrollbarGeometry bar = scrollbarGeometry();
+            if (bar != null) {
+                setScrollFromThumbTop((int) mouseY - scrollbarDragOffset, bar);
+            }
             return true;
         }
         return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
@@ -226,18 +165,61 @@ public final class HowToPlayScreen extends Screen {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
-        if (button == 0 && this.scrollBarDragging) {
-            this.scrollBarDragging = false;
+        if (button == 0 && draggingScrollbar) {
+            draggingScrollbar = false;
             return true;
         }
         return super.mouseReleased(mouseX, mouseY, button);
     }
 
-    @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        this.scroll = Math.max(0, Math.min(maxScroll(), this.scroll - (int) Math.round(scrollY * 28.0)));
-        return true;
+    private void drawScrollbar(GuiGraphics graphics, int x, int trackTop, int trackBottom, int viewport, int maxScroll, int mouseX, int mouseY) {
+        if (maxScroll <= 0) {
+            return;
+        }
+        int trackHeight = Math.max(1, trackBottom - trackTop);
+        int thumbHeight = Math.max(24, (int) Math.round(trackHeight * (viewport / (double) Math.max(viewport, contentHeight))));
+        thumbHeight = Math.min(trackHeight, thumbHeight);
+        int travel = Math.max(1, trackHeight - thumbHeight);
+        int thumbTop = trackTop + (int) Math.round(travel * (scroll / (double) maxScroll));
+        boolean hovered = mouseX >= x && mouseX < x + 8 && mouseY >= thumbTop && mouseY < thumbTop + thumbHeight;
+
+        graphics.fill(x, trackTop, x + 8, trackBottom, 0x66000000);
+        graphics.fill(x, thumbTop, x + 8, thumbTop + thumbHeight,
+            draggingScrollbar || hovered ? 0xFFD0D0D0 : 0xFF909090);
     }
+
+    private ScrollbarGeometry scrollbarGeometry() {
+        int panelWidth = Math.min(760, width - 40);
+        int left = (width - panelWidth) / 2;
+        int top = 48;
+        int bottom = height - 42;
+        int viewport = Math.max(1, bottom - top - 36);
+        int maxScroll = Math.max(0, contentHeight - viewport);
+        if (maxScroll <= 0) {
+            return null;
+        }
+
+        int x = left + panelWidth - 14;
+        int trackTop = top + 8;
+        int trackBottom = bottom - 8;
+        int trackHeight = Math.max(1, trackBottom - trackTop);
+        int thumbHeight = Math.max(24, (int) Math.round(trackHeight * (viewport / (double) Math.max(viewport, contentHeight))));
+        thumbHeight = Math.min(trackHeight, thumbHeight);
+        int travel = Math.max(1, trackHeight - thumbHeight);
+        int thumbTop = trackTop + (int) Math.round(travel * (scroll / (double) maxScroll));
+        return new ScrollbarGeometry(x, 8, trackTop, trackBottom, thumbTop, thumbHeight, maxScroll);
+    }
+
+    private void setScrollFromThumbTop(int requestedThumbTop, ScrollbarGeometry bar) {
+        int travel = Math.max(1, (bar.trackBottom - bar.trackTop) - bar.thumbHeight);
+        int clampedThumbTop = Math.max(bar.trackTop, Math.min(bar.trackTop + travel, requestedThumbTop));
+        double fraction = (clampedThumbTop - bar.trackTop) / (double) travel;
+        scroll = Math.max(0, Math.min(bar.maxScroll, (int) Math.round(fraction * bar.maxScroll)));
+    }
+
+    private record ScrollbarGeometry(
+        int x, int width, int trackTop, int trackBottom, int thumbTop, int thumbHeight, int maxScroll
+    ) {}
 
     @Override
     public void onClose() {

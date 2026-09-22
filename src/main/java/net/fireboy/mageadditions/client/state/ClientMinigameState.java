@@ -1,6 +1,7 @@
 package net.fireboy.mageadditions.client.state;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import net.fireboy.mageadditions.network.payload.LobbyStatePayload;
@@ -10,6 +11,7 @@ public final class ClientMinigameState {
     private static final Set<UUID> TEAMMATES = new HashSet<>();
     private static boolean teammateOutlinesEnabled;
     private static LobbyStatePayload lobbyState;
+    private static List<String> equipmentPresets = List.of();
 
     private ClientMinigameState() {}
 
@@ -19,6 +21,14 @@ public final class ClientMinigameState {
 
     public static LobbyStatePayload lobbyState() {
         return lobbyState;
+    }
+
+    public static void setEquipmentPresets(List<String> presets) {
+        equipmentPresets = List.copyOf(presets);
+    }
+
+    public static List<String> equipmentPresets() {
+        return equipmentPresets;
     }
 
     public static void setTeammates(boolean enabled, Iterable<UUID> teammates) {
@@ -41,5 +51,6 @@ public final class ClientMinigameState {
         lobbyState = null;
         teammateOutlinesEnabled = false;
         TEAMMATES.clear();
+        equipmentPresets = List.of();
     }
 }

@@ -502,10 +502,7 @@ public final class CastTimeOverrides {
                     || raw.movement_multiplier < 0.0 || raw.movement_multiplier > 10.0
                     || !validOptionalDistance(maxHeight)
                     || !validOptionalDistance(raw.min_cast_distance)
-                    || !validOptionalDistance(raw.max_cast_distance)
-                    || rangeOverride == null
-                    || (raw.min_cast_distance != null && raw.max_cast_distance != null
-                        && raw.min_cast_distance > raw.max_cast_distance)) {
+                    || rangeOverride == null) {
                 MageAdditions.LOGGER.warn("Ignoring invalid spell behaviour rule for '{}'", entry.getKey());
                 skipped++;
                 continue;
@@ -518,7 +515,6 @@ public final class CastTimeOverrides {
                     maxHeight,
                     requireLineOfSight,
                     raw.min_cast_distance,
-                    raw.max_cast_distance,
                     rangeOverride
             ));
         }
@@ -963,7 +959,6 @@ public final class CastTimeOverrides {
                   //   },
                   //   "require_line_of_sight": true,      // true or false; omit to inherit
                   //   "min_cast_distance": 3.0,           // omit to inherit native minimum
-                  //   "max_cast_distance": 24.0           // omit to inherit native maximum
                   // }
                 }
               },
@@ -1085,7 +1080,6 @@ public final class CastTimeOverrides {
             Double maxHeightAboveGround,
             Boolean lineOfSightOverride,
             Double minCastDistance,
-            Double maxCastDistance,
             NumericOverride rangeOverride
     ) {
         /** Untouched spells have no Mage Additions overrides by default. */
@@ -1096,7 +1090,7 @@ public final class CastTimeOverrides {
         /** No Mage Additions behaviour when the per-spell master switch is off. */
         public static BehaviorSettings disabled() {
             return new BehaviorSettings(
-                    false, MovementMode.DEFAULT, 0.5, null, null, null, null, NumericOverride.disabled()
+                    false, MovementMode.DEFAULT, 0.5, null, null, null, NumericOverride.disabled()
             );
         }
     }

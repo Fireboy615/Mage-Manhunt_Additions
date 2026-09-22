@@ -196,7 +196,6 @@ public final class SpellOverrideConfigService {
                 maxHeight == null ? null : (nullableDistance(maxHeight) == null ? 10.0 : maxHeight),
                 requireLineOfSight,
                 nullableDistance(behavior.min_cast_distance),
-                nullableDistance(behavior.max_cast_distance),
                 toState(behavior.range)
         ).normalized();
     }
@@ -225,7 +224,6 @@ public final class SpellOverrideConfigService {
         behavior.line_of_sight = "default";
 
         behavior.min_cast_distance = safe.minCastDistance();
-        behavior.max_cast_distance = safe.maxCastDistance();
         behavior.range = toConfigRule(safe.range());
         map.put(spellId, behavior);
     }
@@ -520,11 +518,10 @@ public final class SpellOverrideConfigService {
             Double maxHeightAboveGround,
             Boolean lineOfSightOverride,
             Double minCastDistance,
-            Double maxCastDistance,
             RuleState range
     ) {
         public static BehaviorState defaults() {
-            return new BehaviorState(false, "default", 0.5, null, null, null, null, RuleState.disabled());
+            return new BehaviorState(false, "default", 0.5, null, null, null, RuleState.disabled());
         }
 
         public BehaviorState normalized() {
@@ -540,13 +537,6 @@ public final class SpellOverrideConfigService {
             }
 
             Double min = nullableDistance(minCastDistance);
-            Double max = nullableDistance(maxCastDistance);
-            if (min != null && max != null && min > max) {
-                double swap = min;
-                min = max;
-                max = swap;
-            }
-
             RuleState rangeRule = normalizeRuleState(range);
 
             return new BehaviorState(
@@ -556,7 +546,6 @@ public final class SpellOverrideConfigService {
                     maxHeight,
                     lineOfSightOverride,
                     min,
-                    max,
                     rangeRule
             );
         }
@@ -568,7 +557,6 @@ public final class SpellOverrideConfigService {
                     && value.maxHeightAboveGround == null
                     && value.lineOfSightOverride == null
                     && value.minCastDistance == null
-                    && value.maxCastDistance == null
                     && !value.range.enabled();
         }
     }

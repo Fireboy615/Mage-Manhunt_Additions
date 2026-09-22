@@ -25,5 +25,6 @@ public final class MageAdditionsClient {
         // Existing Mage Additions client/minigame registrations.
         modBus.addListener(ClientMinigameEvents::registerKeyMappings);
         NeoForge.EVENT_BUS.addListener(ClientMinigameEvents::onClientTick);
+        NeoForge.EVENT_BUS.addListener(ClientFovEvents::onComputeFovModifier);
     }
 }

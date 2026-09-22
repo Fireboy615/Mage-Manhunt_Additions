@@ -81,7 +81,6 @@ public final class SpellEditorScreen extends Screen {
     private Button lineOfSightButton;
     private Button lineOfSightResetButton;
     private Button minCastDistanceResetButton;
-    private Button maxCastDistanceResetButton;
     private Button saveButton;
     private Button counterspellButton;
     private Button ironsTabButton;
@@ -119,7 +118,6 @@ public final class SpellEditorScreen extends Screen {
     private EditBox movementMultiplierBox;
     private EditBox maxHeightAboveGroundBox;
     private EditBox minCastDistanceBox;
-    private EditBox maxCastDistanceBox;
     private LinkedNumericOverrideControl castControl;
     private LinkedNumericOverrideControl rangeControl;
 
@@ -131,9 +129,7 @@ public final class SpellEditorScreen extends Screen {
     private boolean lineOfSightOverrideActive = false;
     private double originalTargetRange = 32.0;
     private double originalMinCastDistance = 0.0;
-    private double originalMaxCastDistance = 32.0;
     private boolean minCastDistanceOverrideActive = false;
-    private boolean maxCastDistanceOverrideActive = false;
     private boolean updatingBehaviorFields = false;
 
     public SpellEditorScreen(Screen parent, AbstractSpell spell) {
@@ -364,16 +360,6 @@ public final class SpellEditorScreen extends Screen {
                 .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
         y += this.rowGap;
 
-        this.maxCastDistanceBox = numericBox(mageFieldX, y, format(this.originalMaxCastDistance), mageControlWidth);
-        this.maxCastDistanceBox.setResponder(value -> {
-            if (!this.updatingBehaviorFields) {
-                this.maxCastDistanceOverrideActive = true;
-                if (this.maxCastDistanceResetButton != null) this.maxCastDistanceResetButton.active = this.canEdit && this.mageOverridesEnabled;
-            }
-        });
-        this.maxCastDistanceResetButton = addRenderableWidget(Button.builder(Component.literal("Reset"), b -> resetMaxCastDistance())
-                .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
-
         y += this.rowGap * 2;
         if (this.spell.getSpellId().equals("irons_spellbooks:counterspell")) {
             this.counterspellButton = addRenderableWidget(Button.builder(Component.literal("Counterspell Rework Settings..."), b -> {
@@ -403,11 +389,9 @@ public final class SpellEditorScreen extends Screen {
         registerScrollable(this.lineOfSightResetButton, ScrollSection.MAGE);
         registerScrollable(this.minCastDistanceBox, ScrollSection.MAGE);
         registerScrollable(this.minCastDistanceResetButton, ScrollSection.MAGE);
-        registerScrollable(this.maxCastDistanceBox, ScrollSection.MAGE);
-        registerScrollable(this.maxCastDistanceResetButton, ScrollSection.MAGE);
         registerScrollable(this.counterspellButton, ScrollSection.MAGE);
 
-        int lastMageWidgetBottom = this.maxCastDistanceResetButton.getY() + this.maxCastDistanceResetButton.getHeight();
+        int lastMageWidgetBottom = this.minCastDistanceResetButton.getY() + this.minCastDistanceResetButton.getHeight();
         if (this.counterspellButton != null) {
             lastMageWidgetBottom = Math.max(lastMageWidgetBottom, this.counterspellButton.getY() + this.counterspellButton.getHeight());
         }
@@ -611,8 +595,6 @@ public final class SpellEditorScreen extends Screen {
         setVisible(this.lineOfSightResetButton, showMage);
         setVisible(this.minCastDistanceBox, showMage);
         setVisible(this.minCastDistanceResetButton, showMage);
-        setVisible(this.maxCastDistanceBox, showMage);
-        setVisible(this.maxCastDistanceResetButton, showMage);
         setVisible(this.counterspellButton, showMage);
 
         if (this.ironsTabButton != null) {
@@ -689,8 +671,6 @@ public final class SpellEditorScreen extends Screen {
         if (this.lineOfSightResetButton != null) this.lineOfSightResetButton.active = mageEnabled && this.lineOfSightOverrideActive;
         if (this.minCastDistanceBox != null) this.minCastDistanceBox.active = mageEnabled;
         if (this.minCastDistanceResetButton != null) this.minCastDistanceResetButton.active = mageEnabled && this.minCastDistanceOverrideActive;
-        if (this.maxCastDistanceBox != null) this.maxCastDistanceBox.active = mageEnabled;
-        if (this.maxCastDistanceResetButton != null) this.maxCastDistanceResetButton.active = mageEnabled && this.maxCastDistanceOverrideActive;
         if (this.counterspellButton != null) this.counterspellButton.active = enabled;
 
         this.saveButton.active = enabled;
@@ -744,9 +724,7 @@ public final class SpellEditorScreen extends Screen {
         this.lineOfSightValue = this.originalLineOfSight;
         this.lineOfSightOverrideActive = false;
         this.minCastDistanceOverrideActive = false;
-        this.maxCastDistanceOverrideActive = false;
         setBehaviorBoxValue(this.minCastDistanceBox, format(this.originalMinCastDistance));
-        setBehaviorBoxValue(this.maxCastDistanceBox, format(this.originalMaxCastDistance));
         refreshBehaviorButtons();
         updateCastControlPresentation();
         updateRangeControlPresentation();
@@ -773,10 +751,6 @@ public final class SpellEditorScreen extends Screen {
             double movementMultiplier = parseDouble(this.movementMultiplierBox, "Movement multiplier", 0.0, 10.0);
             double maxHeightAboveGround = parseDouble(this.maxHeightAboveGroundBox, "Maximum height above ground", 0.0, 1_000_000.0);
             double minCastDistance = parseDouble(this.minCastDistanceBox, "Minimum cast distance", 0.0, 1_000_000.0);
-            double maxCastDistance = parseDouble(this.maxCastDistanceBox, "Maximum cast distance", 0.0, 1_000_000.0);
-            if (minCastDistance > maxCastDistance) {
-                throw new IllegalArgumentException("Minimum cast distance cannot be greater than maximum cast distance.");
-            }
 
             this.waitingForServerSnapshot = true;
             this.status = Component.literal("Saving to server...").withStyle(ChatFormatting.YELLOW);
@@ -804,9 +778,7 @@ public final class SpellEditorScreen extends Screen {
                     this.lineOfSightOverrideActive,
                     this.lineOfSightValue,
                     this.minCastDistanceOverrideActive,
-                    minCastDistance,
-                    this.maxCastDistanceOverrideActive,
-                    maxCastDistance
+                    minCastDistance
             ));
         } catch (Exception exception) {
             this.waitingForServerSnapshot = false;
@@ -861,11 +833,8 @@ public final class SpellEditorScreen extends Screen {
         this.lineOfSightOverrideActive = snapshot.hasLineOfSightOverride();
         this.lineOfSightValue = snapshot.lineOfSightValue();
         this.originalMinCastDistance = snapshot.originalMinCastDistance();
-        this.originalMaxCastDistance = snapshot.originalMaxCastDistance();
         this.minCastDistanceOverrideActive = snapshot.hasMinCastDistance();
-        this.maxCastDistanceOverrideActive = snapshot.hasMaxCastDistance();
         setBehaviorBoxValue(this.minCastDistanceBox, format(snapshot.minCastDistance()));
-        setBehaviorBoxValue(this.maxCastDistanceBox, format(snapshot.maxCastDistance()));
         refreshBehaviorButtons();
 
         setEditingEnabled(this.canEdit);
@@ -930,12 +899,6 @@ public final class SpellEditorScreen extends Screen {
     private void resetMinCastDistance() {
         this.minCastDistanceOverrideActive = false;
         setBehaviorBoxValue(this.minCastDistanceBox, format(this.originalMinCastDistance));
-        setEditingEnabled(this.canEdit);
-    }
-
-    private void resetMaxCastDistance() {
-        this.maxCastDistanceOverrideActive = false;
-        setBehaviorBoxValue(this.maxCastDistanceBox, format(this.originalMaxCastDistance));
         setEditingEnabled(this.canEdit);
     }
 
@@ -1148,8 +1111,6 @@ public final class SpellEditorScreen extends Screen {
         drawLabel(graphics, x, y, "Require line of sight");
         y += this.rowGap;
         drawLabel(graphics, x, y, "Min cast distance (blocks)");
-        y += this.rowGap;
-        drawLabel(graphics, x, y, "Max cast distance (blocks)");
         y += this.rowGap;
 
         int helpY = y + this.rowGap;

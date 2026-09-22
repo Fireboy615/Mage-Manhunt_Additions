@@ -19,7 +19,7 @@ public final class SpellConfigNetwork {
 
     @SubscribeEvent
     public static void register(RegisterPayloadHandlersEvent event) {
-        PayloadRegistrar registrar = event.registrar("8");
+        PayloadRegistrar registrar = event.registrar("9");
 
         registrar.playToServer(
                 SpellConfigPayloads.Request.TYPE,
