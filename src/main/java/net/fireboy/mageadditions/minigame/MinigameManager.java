@@ -1,7 +1,8 @@
 package net.fireboy.mageadditions.minigame;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.RecordComponent;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -176,53 +177,6 @@ public final class MinigameManager {
         }
     }
 
-    public static void adminAssignTeam(ServerPlayer operator, UUID targetId, ResourceLocation teamId) {
-        MinecraftServer server = operator.getServer();
-        MinigameDefinition game = activeDefinition();
-        if (server == null || game == null || !teamsEnabled || phase == Phase.IDLE) {
-            return;
-        }
-        if (!isActiveTeam(game, teamId)) {
-            operator.sendSystemMessage(Component.translatable("message.mageadditions.minigame.invalid_team").withStyle(ChatFormatting.RED));
-            return;
-        }
-        ServerPlayer target = server.getPlayerList().getPlayer(targetId);
-        if (target == null) {
-            return;
-        }
-        TEAM_SELECTIONS.put(targetId, teamId);
-        assignScoreboardTeam(target, game.team(teamId));
-        if (phase == Phase.LOBBY) {
-            broadcastLobbyState(server);
-        } else {
-            syncTeamOutlines(server);
-            sendMatchControlState(operator);
-        }
-        saveSession(server);
-    }
-
-    public static void randomizeTeams(ServerPlayer operator) {
-        MinecraftServer server = operator.getServer();
-        MinigameDefinition game = activeDefinition();
-        if (server == null || game == null || !teamsEnabled || phase != Phase.LOBBY || teamCount <= 0) {
-            return;
-        }
-        List<ServerPlayer> players = new ArrayList<>(server.getPlayerList().getPlayers());
-        Collections.shuffle(players);
-        for (int i = 0; i < players.size(); i++) {
-            ServerPlayer player = players.get(i);
-            MinigameDefinition.TeamDefinition team = game.teams().get(i % teamCount);
-            TEAM_SELECTIONS.put(player.getUUID(), team.id());
-            assignScoreboardTeam(player, team);
-        }
-        broadcastLobbyState(server);
-        saveSession(server);
-    }
-
-    public static void refreshMatchControl(ServerPlayer operator) {
-        sendMatchControlState(operator);
-    }
-
     public static void cancelCurrentSession(ServerPlayer operator) {
         MinecraftServer server = operator.getServer();
         if (server == null || phase == Phase.IDLE) {
@@ -287,11 +241,11 @@ public final class MinigameManager {
         // Do not allow border damage during spawn placement. Players are moved first, then damage is enabled.
         border.setDamageSafeZone(0.0);
         border.setDamagePerBlock(0.0);
-        border.setSize(radiusToDiameter(activeSettings.initialBorderSize()));
+        border.setSize(activeSettings.initialBorderSize());
         if (activeSettings.durationSeconds() > 0 && activeSettings.initialBorderSize() != activeSettings.finalBorderSize()) {
             border.lerpSizeBetween(
-                    radiusToDiameter(activeSettings.initialBorderSize()),
-                    radiusToDiameter(activeSettings.finalBorderSize()),
+                    activeSettings.initialBorderSize(),
+                    activeSettings.finalBorderSize(),
                     activeSettings.durationSeconds() * 1000L
             );
         }
@@ -341,10 +295,6 @@ public final class MinigameManager {
     }
 
     private static void applyStarterKit(ServerPlayer player, MinigameDefinition game, MinigameSettings settings) {
-        if (settings.hasCustomEquipmentPreset() && EquipmentPresetStore.apply(player, settings.customEquipmentPreset())) {
-            return;
-        }
-
         MinigameSettings.KitPreset kit = settings.kitPreset();
         if (kit == MinigameSettings.KitPreset.MODE_DEFAULT) {
             if (game.practice()) {
@@ -466,7 +416,7 @@ public final class MinigameManager {
             restoreScoreboardAssignments(server, game);
 
             if (phase == Phase.RUNNING || phase == Phase.PAUSED) {
-                server.overworld().getWorldBorder().setSize(radiusToDiameter(snapshot.currentBorderSize()));
+                server.overworld().getWorldBorder().setSize(snapshot.currentBorderSize());
             }
 
             if (phase == Phase.RUNNING) {
@@ -528,23 +478,35 @@ public final class MinigameManager {
         tickCounter = 0;
 
         MinigameDefinition game = activeDefinition();
-        if (game == null || activeSettings == null) {
+        if (game == null || game.practice() || activeSettings == null) {
             return;
         }
 
         WorldBorder border = server.overworld().getWorldBorder();
         int seconds = Math.max(0, matchTicksRemaining / 20);
-        String time = activeSettings.durationSeconds() <= 0 ? "∞" : String.format("%02d:%02d", seconds / 60, seconds % 60);
+        String time = String.format("%02d:%02d", seconds / 60, seconds % 60);
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            int radius = Math.max(0, (int) Math.round(border.getSize() / 2.0));
+            int distance = Math.max(0, (int) Math.floor(border.getDistanceToBorder(player)));
             player.displayClientMessage(
-                    Component.literal("Border Radius: ").withStyle(ChatFormatting.GOLD)
-                            .append(Component.literal(Integer.toString(radius)).withStyle(ChatFormatting.YELLOW))
+                    Component.literal("Border: ").withStyle(ChatFormatting.GOLD)
+                            .append(Component.literal(Integer.toString(distance)).withStyle(ChatFormatting.YELLOW))
                             .append(Component.literal("  |  Time: ").withStyle(ChatFormatting.GOLD))
                             .append(Component.literal(time).withStyle(ChatFormatting.YELLOW)),
                     true
             );
         }
+    }
+
+    /**
+     * Re-sends the current live match-control state to an operator whose control
+     * screen is already open. This is intentionally separate from openAdminMenu()
+     * so a refresh request never changes screens or re-enters lobby setup.
+     */
+    public static void refreshMatchControl(ServerPlayer operator) {
+        if (operator == null || !operator.hasPermissions(2)) {
+            return;
+        }
+        sendMatchControlState(operator);
     }
 
     public static void openAdminMenu(ServerPlayer operator) {
@@ -587,11 +549,10 @@ public final class MinigameManager {
 
         WorldBorder border = server.overworld().getWorldBorder();
         double currentSize = border.getSize();
-        double finalDiameter = radiusToDiameter(activeSettings.finalBorderSize());
-        if (matchTicksRemaining > 0 && currentSize != finalDiameter) {
-            border.lerpSizeBetween(currentSize, finalDiameter, matchTicksRemaining * 50L);
+        if (matchTicksRemaining > 0 && currentSize != activeSettings.finalBorderSize()) {
+            border.lerpSizeBetween(currentSize, activeSettings.finalBorderSize(), matchTicksRemaining * 50L);
         } else if (matchTicksRemaining <= 0) {
-            border.setSize(finalDiameter);
+            border.setSize(activeSettings.finalBorderSize());
         }
 
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -644,6 +605,132 @@ public final class MinigameManager {
                 false
         );
         sendMatchControlState(operator);
+    }
+
+    /**
+     * Lets an operator move a participant to another active team from the live
+     * match-control screen. The server remains authoritative: the requested
+     * team is validated against the current minigame/team-count before any
+     * scoreboard or saved-session state is changed.
+     */
+    public static void adminAssignTeam(ServerPlayer operator, UUID targetId, ResourceLocation teamId) {
+        MinecraftServer server = operator.getServer();
+        MinigameDefinition game = activeDefinition();
+        if (server == null || game == null || phase == Phase.IDLE) {
+            return;
+        }
+
+        if (!teamsEnabled || !isActiveTeam(game, teamId)) {
+            operator.sendSystemMessage(
+                    Component.translatable("message.mageadditions.minigame.invalid_team").withStyle(ChatFormatting.RED)
+            );
+            sendMatchControlState(operator);
+            return;
+        }
+
+        // During a running/paused match only actual match participants may be
+        // reassigned. In the lobby an online player may be assigned before launch.
+        if (phase != Phase.LOBBY && !MATCH_PARTICIPANTS.contains(targetId)) {
+            sendMatchControlState(operator);
+            return;
+        }
+
+        ServerPlayer target = server.getPlayerList().getPlayer(targetId);
+        if (target == null) {
+            // Keep the operation deterministic: the control screen currently
+            // exposes online players, so do not silently mutate an offline entry.
+            sendMatchControlState(operator);
+            return;
+        }
+
+        TEAM_SELECTIONS.put(targetId, teamId);
+        MinigameDefinition.TeamDefinition team = game.team(teamId);
+        if (team != null) {
+            assignScoreboardTeam(target, team);
+        }
+
+        syncTeamOutlines(server);
+        saveSession(server);
+
+        if (phase == Phase.LOBBY) {
+            broadcastLobbyState(server);
+        } else {
+            // Refresh the operator's already-open match-control screen so the
+            // team selector immediately reflects the authoritative server state.
+            sendMatchControlState(operator);
+        }
+    }
+
+    /**
+     * Randomly redistributes players across the currently active teams.
+     * Assignment is balanced (team sizes differ by at most one) while the
+     * shuffled player order keeps the result random. In a live match we use
+     * the full participant set, including temporarily offline participants, so
+     * reconnecting players keep the randomized team chosen by the host.
+     */
+    public static void randomizeTeams(ServerPlayer operator) {
+        MinecraftServer server = operator.getServer();
+        MinigameDefinition game = activeDefinition();
+        if (server == null || game == null || phase == Phase.IDLE) {
+            return;
+        }
+
+        if (!teamsEnabled || teamCount < 2 || game.teams().isEmpty()) {
+            operator.sendSystemMessage(
+                    Component.translatable("message.mageadditions.minigame.invalid_team").withStyle(ChatFormatting.RED)
+            );
+            if (phase != Phase.LOBBY) {
+                sendMatchControlState(operator);
+            }
+            return;
+        }
+
+        int activeTeamCount = Math.min(teamCount, game.teams().size());
+        List<UUID> players = new ArrayList<>();
+        if (phase == Phase.LOBBY) {
+            for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+                players.add(player.getUUID());
+            }
+        } else {
+            players.addAll(MATCH_PARTICIPANTS);
+        }
+
+        if (players.isEmpty()) {
+            if (phase != Phase.LOBBY) {
+                sendMatchControlState(operator);
+            }
+            return;
+        }
+
+        // Fisher-Yates using Minecraft's own RNG avoids another dependency and
+        // produces a random ordering before the balanced round-robin assignment.
+        RandomSource random = RandomSource.create();
+        for (int i = players.size() - 1; i > 0; i--) {
+            int j = random.nextInt(i + 1);
+            UUID swap = players.get(i);
+            players.set(i, players.get(j));
+            players.set(j, swap);
+        }
+
+        for (int i = 0; i < players.size(); i++) {
+            UUID playerId = players.get(i);
+            MinigameDefinition.TeamDefinition team = game.teams().get(i % activeTeamCount);
+            TEAM_SELECTIONS.put(playerId, team.id());
+
+            ServerPlayer online = server.getPlayerList().getPlayer(playerId);
+            if (online != null) {
+                assignScoreboardTeam(online, team);
+            }
+        }
+
+        syncTeamOutlines(server);
+        saveSession(server);
+
+        if (phase == Phase.LOBBY) {
+            broadcastLobbyState(server);
+        } else {
+            sendMatchControlState(operator);
+        }
     }
 
     public static void onPlayerLoggedIn(ServerPlayer player) {
@@ -831,10 +918,30 @@ public final class MinigameManager {
             if (point == null) {
                 continue;
             }
+
             player.setDeltaMovement(0.0, 0.0, 0.0);
             player.resetFallDistance();
-            // Keep position frozen, but preserve the player's live yaw/pitch so they can look around while paused.
-            player.teleportTo(point.level(), point.x(), point.y(), point.z(), player.getYRot(), player.getXRot());
+
+            // Pausing locks the player's position, not their camera. Previously we
+            // teleported every paused player every tick using the yaw/pitch captured
+            // when the pause began. That continually fought normal mouse input and
+            // caused fast camera movement to jitter or snap back.
+            //
+            // Only send a correction when the player actually leaves the frozen
+            // position, and preserve whatever rotation they currently have. This keeps
+            // movement frozen while looking around remains identical to normal play.
+            boolean wrongLevel = player.serverLevel() != point.level();
+            boolean moved = wrongLevel || player.distanceToSqr(point.x(), point.y(), point.z()) > 1.0E-6D;
+            if (moved) {
+                player.teleportTo(
+                        point.level(),
+                        point.x(),
+                        point.y(),
+                        point.z(),
+                        player.getYRot(),
+                        player.getXRot()
+                );
+            }
         }
     }
 
@@ -843,19 +950,16 @@ public final class MinigameManager {
                 player.serverLevel(),
                 player.getX(),
                 player.getY(),
-                player.getZ(),
-                player.getYRot(),
-                player.getXRot()
+                player.getZ()
         ));
     }
 
     private static void showPausedActionbar(MinecraftServer server) {
         int seconds = Math.max(0, matchTicksRemaining / 20);
-        String time = activeSettings != null && activeSettings.durationSeconds() <= 0 ? "∞" : String.format("%02d:%02d", seconds / 60, seconds % 60);
-        int radius = Math.max(0, (int)Math.round(server.overworld().getWorldBorder().getSize() / 2.0));
+        String time = String.format("%02d:%02d", seconds / 60, seconds % 60);
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             player.displayClientMessage(
-                    Component.translatable("message.mageadditions.minigame.paused_actionbar", time, radius).withStyle(ChatFormatting.YELLOW),
+                    Component.translatable("message.mageadditions.minigame.paused_actionbar", time).withStyle(ChatFormatting.YELLOW),
                     true
             );
         }
@@ -924,7 +1028,7 @@ public final class MinigameManager {
     }
 
     private static void sendMatchControlState(ServerPlayer operator) {
-        if (operator == null || activeGame == null || activeSettings == null || (phase != Phase.RUNNING && phase != Phase.PAUSED)) {
+        if (operator == null || activeGame == null || (phase != Phase.RUNNING && phase != Phase.PAUSED)) {
             return;
         }
         MinecraftServer server = operator.getServer();
@@ -932,35 +1036,216 @@ public final class MinigameManager {
             return;
         }
         List<OpenMatchControlPayload.DeadPlayer> deadPlayers = new ArrayList<>();
-        List<OpenMatchControlPayload.PlayerTeamEntry> players = new ArrayList<>();
-        int onlineParticipants = 0;
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            boolean participant = MATCH_PARTICIPANTS.contains(player.getUUID());
-            if (!participant) {
-                continue;
-            }
-            onlineParticipants++;
-            boolean dead = DEAD_PARTICIPANTS.contains(player.getUUID());
-            if (dead) {
+            if (DEAD_PARTICIPANTS.contains(player.getUUID())) {
                 deadPlayers.add(new OpenMatchControlPayload.DeadPlayer(player.getUUID(), player.getGameProfile().getName()));
             }
-            ResourceLocation teamId = TEAM_SELECTIONS.getOrDefault(player.getUUID(), MinigameRegistry.FFA_TEAM_ID);
-            players.add(new OpenMatchControlPayload.PlayerTeamEntry(player.getUUID(), player.getGameProfile().getName(), teamId, dead));
         }
-        PacketDistributor.sendToPlayer(operator, new OpenMatchControlPayload(
-                activeGame,
-                phase == Phase.PAUSED,
-                teamsEnabled,
-                teamCount,
-                Math.max(0, matchTicksRemaining / 20),
-                server.overworld().getWorldBorder().getSize() / 2.0,
-                activeSettings.initialBorderSize(),
-                activeSettings.finalBorderSize(),
-                onlineParticipants,
-                MATCH_PARTICIPANTS.size(),
-                deadPlayers,
-                players
-        ));
+        int onlineParticipants = 0;
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            if (MATCH_PARTICIPANTS.contains(player.getUUID())) {
+                onlineParticipants++;
+            }
+        }
+
+        OpenMatchControlPayload payload = buildMatchControlPayload(server, onlineParticipants, deadPlayers);
+        if (payload != null) {
+            PacketDistributor.sendToPlayer(operator, payload);
+        }
+    }
+
+    /**
+     * Builds the current match-control record by component name rather than binding this
+     * manager to one exact constructor revision. The match-control UI has grown several
+     * times (live border values, team controls, etc.); using the record metadata here
+     * keeps the server sender compatible with both the older and newer payload layouts.
+     */
+    private static OpenMatchControlPayload buildMatchControlPayload(
+            MinecraftServer server,
+            int onlineParticipants,
+            List<OpenMatchControlPayload.DeadPlayer> deadPlayers
+    ) {
+        try {
+            RecordComponent[] components = OpenMatchControlPayload.class.getRecordComponents();
+            Class<?>[] parameterTypes = new Class<?>[components.length];
+            Object[] values = new Object[components.length];
+
+            WorldBorder border = server.overworld().getWorldBorder();
+            double currentSize = border.getSize();
+            double currentRadius = currentSize / 2.0;
+            double initialSize = activeSettings == null ? currentSize : activeSettings.initialBorderSize();
+            double finalSize = activeSettings == null ? currentSize : activeSettings.finalBorderSize();
+            double initialRadius = initialSize / 2.0;
+            double finalRadius = finalSize / 2.0;
+            int secondsRemaining = Math.max(0, matchTicksRemaining / 20);
+            List<?> playerTeams = buildMatchControlTeamEntries(server);
+
+            for (int i = 0; i < components.length; i++) {
+                RecordComponent component = components[i];
+                parameterTypes[i] = component.getType();
+                values[i] = matchControlComponentValue(
+                        component,
+                        border,
+                        currentSize,
+                        currentRadius,
+                        initialSize,
+                        initialRadius,
+                        finalSize,
+                        finalRadius,
+                        secondsRemaining,
+                        onlineParticipants,
+                        deadPlayers,
+                        playerTeams
+                );
+            }
+
+            Constructor<OpenMatchControlPayload> constructor = OpenMatchControlPayload.class.getDeclaredConstructor(parameterTypes);
+            constructor.setAccessible(true);
+            return constructor.newInstance(values);
+        } catch (ReflectiveOperationException | RuntimeException exception) {
+            MageAdditions.LOGGER.error("Could not build match-control payload", exception);
+            return null;
+        }
+    }
+
+    private static Object matchControlComponentValue(
+            RecordComponent component,
+            WorldBorder border,
+            double currentSize,
+            double currentRadius,
+            double initialSize,
+            double initialRadius,
+            double finalSize,
+            double finalRadius,
+            int secondsRemaining,
+            int onlineParticipants,
+            List<OpenMatchControlPayload.DeadPlayer> deadPlayers,
+            List<?> playerTeams
+    ) {
+        String name = component.getName().toLowerCase();
+        Class<?> type = component.getType();
+
+        if (type == ResourceLocation.class) {
+            return activeGame;
+        }
+        if (type == boolean.class || type == Boolean.class) {
+            if (name.contains("paused")) {
+                return phase == Phase.PAUSED;
+            }
+            if (name.contains("team")) {
+                return teamsEnabled;
+            }
+            return false;
+        }
+        if (type == int.class || type == Integer.class) {
+            if (name.contains("second") || name.contains("time") || name.contains("remaining")) {
+                return secondsRemaining;
+            }
+            if (name.contains("team") && name.contains("count")) {
+                return teamCount;
+            }
+            if (name.contains("online") || name.contains("connected")) {
+                return onlineParticipants;
+            }
+            if (name.contains("total") || name.contains("participant") || name.contains("player")) {
+                return MATCH_PARTICIPANTS.size();
+            }
+            return 0;
+        }
+        if (type == double.class || type == Double.class) {
+            boolean radius = name.contains("radius");
+            if (name.contains("centerx") || name.contains("center_x")) {
+                return border.getCenterX();
+            }
+            if (name.contains("centerz") || name.contains("center_z")) {
+                return border.getCenterZ();
+            }
+            if (name.contains("initial") || name.contains("start")) {
+                return radius ? initialRadius : initialSize;
+            }
+            if (name.contains("final") || name.contains("end") || name.contains("target")) {
+                return radius ? finalRadius : finalSize;
+            }
+            // Current/live border is the safest fallback for an unrecognised border double.
+            return radius ? currentRadius : currentSize;
+        }
+        if (List.class.isAssignableFrom(type)) {
+            if (name.contains("dead")) {
+                return deadPlayers;
+            }
+            if (name.contains("team") || name.contains("player") || name.contains("participant")) {
+                return playerTeams;
+            }
+            return List.of();
+        }
+        return null;
+    }
+
+    private static List<?> buildMatchControlTeamEntries(MinecraftServer server) {
+        Class<?> entryClass = null;
+        for (Class<?> nested : OpenMatchControlPayload.class.getDeclaredClasses()) {
+            if (nested.getSimpleName().equals("PlayerTeamEntry")) {
+                entryClass = nested;
+                break;
+            }
+        }
+        if (entryClass == null || !entryClass.isRecord()) {
+            return List.of();
+        }
+
+        try {
+            RecordComponent[] components = entryClass.getRecordComponents();
+            Class<?>[] parameterTypes = new Class<?>[components.length];
+            for (int i = 0; i < components.length; i++) {
+                parameterTypes[i] = components[i].getType();
+            }
+            Constructor<?> constructor = entryClass.getDeclaredConstructor(parameterTypes);
+            constructor.setAccessible(true);
+
+            List<Object> entries = new ArrayList<>();
+            for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+                if (!MATCH_PARTICIPANTS.contains(player.getUUID())) {
+                    continue;
+                }
+
+                Object[] values = new Object[components.length];
+                ResourceLocation selectedTeam = TEAM_SELECTIONS.get(player.getUUID());
+                for (int i = 0; i < components.length; i++) {
+                    RecordComponent component = components[i];
+                    String name = component.getName().toLowerCase();
+                    Class<?> type = component.getType();
+
+                    if (type == UUID.class) {
+                        values[i] = player.getUUID();
+                    } else if (type == String.class) {
+                        values[i] = player.getGameProfile().getName();
+                    } else if (type == ResourceLocation.class) {
+                        values[i] = selectedTeam != null ? selectedTeam : MinigameRegistry.FFA_TEAM_ID;
+                    } else if (type == boolean.class || type == Boolean.class) {
+                        if (name.contains("dead")) {
+                            values[i] = DEAD_PARTICIPANTS.contains(player.getUUID());
+                        } else if (name.contains("host")) {
+                            values[i] = player.getUUID().equals(hostId);
+                        } else if (name.contains("online") || name.contains("connected")) {
+                            values[i] = true;
+                        } else {
+                            values[i] = false;
+                        }
+                    } else if (type == int.class || type == Integer.class) {
+                        values[i] = 0;
+                    } else if (type == double.class || type == Double.class) {
+                        values[i] = 0.0;
+                    } else {
+                        values[i] = null;
+                    }
+                }
+                entries.add(constructor.newInstance(values));
+            }
+            return entries;
+        } catch (ReflectiveOperationException | RuntimeException exception) {
+            MageAdditions.LOGGER.warn("Could not build match-control player/team entries", exception);
+            return List.of();
+        }
     }
 
     private static void saveSession(MinecraftServer server) {
@@ -975,7 +1260,7 @@ public final class MinigameManager {
                 teamCount,
                 activeSettings,
                 matchTicksRemaining,
-                server.overworld().getWorldBorder().getSize() / 2.0,
+                server.overworld().getWorldBorder().getSize(),
                 TEAM_SELECTIONS,
                 MATCH_PARTICIPANTS,
                 DEAD_PARTICIPANTS,
@@ -983,7 +1268,7 @@ public final class MinigameManager {
         ));
     }
 
-    private record FreezePoint(ServerLevel level, double x, double y, double z, float yRot, float xRot) {}
+    private record FreezePoint(ServerLevel level, double x, double y, double z) {}
 
     private static void putPlayerInPregame(ServerPlayer player) {
         player.setGameMode(GameType.ADVENTURE);
@@ -1034,8 +1319,13 @@ public final class MinigameManager {
         }
         List<LobbyStatePayload.RosterEntry> entries = new ArrayList<>();
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            ResourceLocation team = TEAM_SELECTIONS.getOrDefault(player.getUUID(), MinigameRegistry.UNASSIGNED_TEAM_ID);
-            entries.add(new LobbyStatePayload.RosterEntry(player.getUUID(), player.getGameProfile().getName(), team));
+            ResourceLocation team = TEAM_SELECTIONS.get(player.getUUID());
+            if (team != null) {
+                LobbyStatePayload.RosterEntry entry = buildLobbyRosterEntry(player, team);
+                if (entry != null) {
+                    entries.add(entry);
+                }
+            }
         }
         LobbyStatePayload payload = new LobbyStatePayload(
                 activeGame,
@@ -1047,6 +1337,56 @@ public final class MinigameManager {
             PacketDistributor.sendToPlayer(player, payload);
         }
         syncTeamOutlines(server);
+    }
+
+    /**
+     * Builds a lobby roster entry by record component rather than constructor arity.
+     * Newer lobby payloads include the player's UUID while older revisions only
+     * stored name + team; this keeps MinigameManager source-compatible with both.
+     */
+    private static LobbyStatePayload.RosterEntry buildLobbyRosterEntry(
+            ServerPlayer player,
+            ResourceLocation team
+    ) {
+        try {
+            RecordComponent[] components = LobbyStatePayload.RosterEntry.class.getRecordComponents();
+            Class<?>[] parameterTypes = new Class<?>[components.length];
+            Object[] values = new Object[components.length];
+
+            for (int i = 0; i < components.length; i++) {
+                RecordComponent component = components[i];
+                parameterTypes[i] = component.getType();
+                Class<?> type = component.getType();
+
+                if (type == UUID.class) {
+                    values[i] = player.getUUID();
+                } else if (type == String.class) {
+                    values[i] = player.getGameProfile().getName();
+                } else if (type == ResourceLocation.class) {
+                    values[i] = team;
+                } else if (type == boolean.class || type == Boolean.class) {
+                    values[i] = false;
+                } else if (type == int.class || type == Integer.class) {
+                    values[i] = 0;
+                } else if (type == double.class || type == Double.class) {
+                    values[i] = 0.0;
+                } else {
+                    values[i] = null;
+                }
+            }
+
+            Constructor<LobbyStatePayload.RosterEntry> constructor =
+                    LobbyStatePayload.RosterEntry.class.getDeclaredConstructor(parameterTypes);
+            constructor.setAccessible(true);
+            return constructor.newInstance(values);
+        } catch (ReflectiveOperationException | RuntimeException exception) {
+            MageAdditions.LOGGER.warn(
+                    "Could not build lobby roster entry for {}",
+                    player.getGameProfile().getName(),
+                    exception
+            );
+            return null;
+        }
     }
 
     private static void syncTeamOutlines(MinecraftServer server) {
@@ -1187,9 +1527,5 @@ public final class MinigameManager {
             return ItemStack.EMPTY;
         }
         return new ItemStack(item, count);
-    }
-
-    private static double radiusToDiameter(double radius) {
-        return Math.max(1.0, radius * 2.0);
     }
 }

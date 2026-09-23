@@ -9,6 +9,7 @@ import net.fireboy.mageadditions.minigame.MinigameDefinition;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.Renderable;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -91,7 +92,9 @@ public final class HowToPlayScreen extends Screen {
         }
 
         drawScrollbar(graphics, scrollbarX, top + 8, bottom - 8, viewport, maxScroll, mouseX, mouseY);
-        super.render(graphics, mouseX, mouseY, partialTick);
+        for (Renderable renderable : renderables) {
+            renderable.render(graphics, mouseX, mouseY, partialTick);
+        }
     }
 
     private int drawImage(GuiGraphics graphics, SectionData section, int x, int y, int maxWidth) {

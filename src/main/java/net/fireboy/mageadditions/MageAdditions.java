@@ -9,6 +9,7 @@ import net.fireboy.mageadditions.minigame.MinigameServerEvents;
 import net.fireboy.mageadditions.network.MinigameNetwork;
 import net.fireboy.mageadditions.network.SpellConfigServerEvents;
 import net.fireboy.mageadditions.spell.SpellBehaviorServerEvents;
+import net.fireboy.mageadditions.spell.ProjectileOverrideServerEvents;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.common.NeoForge;
@@ -29,6 +30,7 @@ public final class MageAdditions {
         NeoForge.EVENT_BUS.addListener(MagehunterBalanceEvents::onEntityJoinLevel);
         NeoForge.EVENT_BUS.addListener(SpellConfigServerEvents::onPlayerLoggedIn);
         NeoForge.EVENT_BUS.addListener(SpellBehaviorServerEvents::onServerTick);
+        NeoForge.EVENT_BUS.addListener(ProjectileOverrideServerEvents::onEntityJoinLevel);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onPlayerLoggedIn);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onPlayerLoggedOut);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onPlayerRespawn);

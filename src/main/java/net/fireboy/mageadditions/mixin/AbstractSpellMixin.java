@@ -2,6 +2,8 @@ package net.fireboy.mageadditions.mixin;
 
 import io.redspace.ironsspellbooks.api.magic.MagicData;
 import io.redspace.ironsspellbooks.api.spells.AbstractSpell;
+import io.redspace.ironsspellbooks.api.spells.CastSource;
+import io.redspace.ironsspellbooks.api.spells.CastType;
 import io.redspace.ironsspellbooks.capabilities.magic.TargetEntityCastData;
 import net.fireboy.mageadditions.config.CastTimeOverrides;
 import net.fireboy.mageadditions.spell.CounterspellHandler;
@@ -9,6 +11,8 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
@@ -17,6 +21,10 @@ import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+import java.util.Optional;
 
 /** Central hooks for Iron's Spells 'n Spellbooks 1.21.1-3.14.x. */
 @Mixin(value = AbstractSpell.class, remap = false)
@@ -38,6 +46,41 @@ public abstract class AbstractSpellMixin {
     ) {
         int originalEffectiveTicks = spell.getEffectiveCastTime(spellLevel, caster);
         return CastTimeOverrides.resolve(spell, originalEffectiveTicks);
+    }
+
+    /**
+     * Iron's INSTANT spells normally have no start sound because they have no
+     * charging phase. Once Mage Additions gives one a real duration, provide a
+     * generic school casting sound at the start unless that spell already
+     * supplies its own start sound. The normal finish sound remains untouched.
+     */
+    @Inject(
+            method = "attemptInitiateCast",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lio/redspace/ironsspellbooks/api/spells/AbstractSpell;onServerPreCast(Lnet/minecraft/world/level/Level;ILnet/minecraft/world/entity/LivingEntity;Lio/redspace/ironsspellbooks/api/magic/MagicData;)V",
+                    shift = At.Shift.AFTER,
+                    remap = false
+            ),
+            remap = false
+    )
+    private void mageAdditions$delayedInstantStartSound(
+            ItemStack stack,
+            int spellLevel,
+            Level level,
+            Player player,
+            CastSource castSource,
+            boolean triggerCooldown,
+            String castingEquipmentSlot,
+            CallbackInfoReturnable<Boolean> cir
+    ) {
+        AbstractSpell spell = (AbstractSpell) (Object) this;
+        MagicData magicData = MagicData.getPlayerMagicData(player);
+        if (spell.getCastType() == CastType.INSTANT
+                && magicData.getCastType() == CastType.LONG
+                && spell.getCastStartSound().isEmpty()) {
+            spell.playSound(Optional.of(spell.getSchoolType().getCastSound()), player);
+        }
     }
 
     /**
@@ -121,7 +164,8 @@ public abstract class AbstractSpellMixin {
             CastTimeOverrides.BehaviorSettings behavior
     ) {
         if (behavior.lineOfSightOverride() == null
-                && behavior.minCastDistance() == null) {
+                && behavior.minCastDistance() == null
+                && behavior.targetingMode() == CastTimeOverrides.TargetingMode.VANILLA) {
             return true;
         }
 
@@ -132,6 +176,23 @@ public abstract class AbstractSpellMixin {
 
         LivingEntity target = targetData.getTarget(serverLevel);
         if (target == null) {
+            return true;
+        }
+
+        CastTimeOverrides.TargetingMode targetingMode = behavior.targetingMode();
+        boolean self = target == caster;
+        if (targetingMode == CastTimeOverrides.TargetingMode.SELF && !self) {
+            sendFailure(caster, "This spell is configured to target only yourself.");
+            return false;
+        }
+        if (targetingMode == CastTimeOverrides.TargetingMode.OTHERS && self) {
+            sendFailure(caster, "This spell is configured to target other entities only.");
+            return false;
+        }
+
+        // Self-targeting should not be blocked by distance/LOS restrictions that
+        // only make sense for a separate target.
+        if (self && targetingMode.allowsSelf()) {
             return true;
         }
 

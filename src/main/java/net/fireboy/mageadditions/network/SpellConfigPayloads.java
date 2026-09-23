@@ -33,6 +33,72 @@ public final class SpellConfigPayloads {
         }
     }
 
+    /** Requests the compact modified/default status used by the spell list. */
+    public record StatusRequest() implements CustomPacketPayload {
+        public static final Type<StatusRequest> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(MageAdditions.MODID, "spell_config_status_request")
+        );
+
+        public static final StreamCodec<RegistryFriendlyByteBuf, StatusRequest> STREAM_CODEC = new StreamCodec<>() {
+            @Override
+            public StatusRequest decode(RegistryFriendlyByteBuf buffer) {
+                return new StatusRequest();
+            }
+
+            @Override
+            public void encode(RegistryFriendlyByteBuf buffer, StatusRequest value) {
+            }
+        };
+
+        @Override
+        public Type<StatusRequest> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * Contains only modified spell ids; absence from the list means the spell is
+     * currently at its Iron's defaults with no active Mage Additions override.
+     */
+    public record ModifiedSync(java.util.List<ResourceLocation> spellIds) implements CustomPacketPayload {
+        private static final int MAX_ENTRIES = 4096;
+
+        public static final Type<ModifiedSync> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(MageAdditions.MODID, "spell_config_modified_sync")
+        );
+
+        public static final StreamCodec<RegistryFriendlyByteBuf, ModifiedSync> STREAM_CODEC = new StreamCodec<>() {
+            @Override
+            public ModifiedSync decode(RegistryFriendlyByteBuf buffer) {
+                int size = buffer.readVarInt();
+                if (size < 0 || size > MAX_ENTRIES) {
+                    throw new IllegalArgumentException("Invalid modified spell count: " + size);
+                }
+                java.util.List<ResourceLocation> ids = new java.util.ArrayList<>(size);
+                for (int i = 0; i < size; i++) {
+                    ids.add(ResourceLocation.STREAM_CODEC.decode(buffer));
+                }
+                return new ModifiedSync(java.util.List.copyOf(ids));
+            }
+
+            @Override
+            public void encode(RegistryFriendlyByteBuf buffer, ModifiedSync value) {
+                if (value.spellIds().size() > MAX_ENTRIES) {
+                    throw new IllegalArgumentException("Too many modified spells: " + value.spellIds().size());
+                }
+                buffer.writeVarInt(value.spellIds().size());
+                for (ResourceLocation id : value.spellIds()) {
+                    ResourceLocation.STREAM_CODEC.encode(buffer, id);
+                }
+            }
+        };
+
+        @Override
+        public Type<ModifiedSync> type() {
+            return TYPE;
+        }
+    }
+
     /**
      * Editor update. Mage Additions no longer duplicates Iron's mana/cooldown
      * overrides; those native values above remain the single source of truth.
@@ -59,7 +125,11 @@ public final class SpellConfigPayloads {
             boolean hasLineOfSightOverride,
             boolean lineOfSightValue,
             boolean hasMinCastDistance,
-            double minCastDistance
+            double minCastDistance,
+            String projectileSpeedMode,
+            double projectileSpeedValue,
+            String shieldInteraction,
+            String targetingMode
     ) implements CustomPacketPayload {
         public static final Type<Update> TYPE = new Type<>(
                 ResourceLocation.fromNamespaceAndPath(MageAdditions.MODID, "spell_config_update")
@@ -90,7 +160,11 @@ public final class SpellConfigPayloads {
                         buffer.readBoolean(),
                         buffer.readBoolean(),
                         buffer.readBoolean(),
-                        buffer.readDouble()
+                        buffer.readDouble(),
+                        buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readUtf(32),
+                        buffer.readUtf(32)
                 );
             }
 
@@ -118,6 +192,10 @@ public final class SpellConfigPayloads {
                 buffer.writeBoolean(value.lineOfSightValue());
                 buffer.writeBoolean(value.hasMinCastDistance());
                 buffer.writeDouble(value.minCastDistance());
+                buffer.writeUtf(value.projectileSpeedMode(), 32);
+                buffer.writeDouble(value.projectileSpeedValue());
+                buffer.writeUtf(value.shieldInteraction(), 32);
+                buffer.writeUtf(value.targetingMode(), 32);
             }
         };
 
@@ -156,7 +234,14 @@ public final class SpellConfigPayloads {
             boolean originalLineOfSight,
             boolean hasMinCastDistance,
             double minCastDistance,
-            double originalMinCastDistance
+            double originalMinCastDistance,
+            boolean supportsProjectileSpeed,
+            String projectileSpeedMode,
+            double projectileSpeedValue,
+            boolean supportsShieldInteraction,
+            String shieldInteraction,
+            boolean supportsTargetingMode,
+            String targetingMode
     ) implements CustomPacketPayload {
         public static final Type<Snapshot> TYPE = new Type<>(
                 ResourceLocation.fromNamespaceAndPath(MageAdditions.MODID, "spell_config_snapshot")
@@ -194,7 +279,14 @@ public final class SpellConfigPayloads {
                         buffer.readBoolean(),
                         buffer.readBoolean(),
                         buffer.readDouble(),
-                        buffer.readDouble()
+                        buffer.readDouble(),
+                        buffer.readBoolean(),
+                        buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readBoolean(),
+                        buffer.readUtf(32),
+                        buffer.readBoolean(),
+                        buffer.readUtf(32)
                 );
             }
 
@@ -229,6 +321,13 @@ public final class SpellConfigPayloads {
                 buffer.writeBoolean(value.hasMinCastDistance());
                 buffer.writeDouble(value.minCastDistance());
                 buffer.writeDouble(value.originalMinCastDistance());
+                buffer.writeBoolean(value.supportsProjectileSpeed());
+                buffer.writeUtf(value.projectileSpeedMode(), 32);
+                buffer.writeDouble(value.projectileSpeedValue());
+                buffer.writeBoolean(value.supportsShieldInteraction());
+                buffer.writeUtf(value.shieldInteraction(), 32);
+                buffer.writeBoolean(value.supportsTargetingMode());
+                buffer.writeUtf(value.targetingMode(), 32);
             }
         };
 

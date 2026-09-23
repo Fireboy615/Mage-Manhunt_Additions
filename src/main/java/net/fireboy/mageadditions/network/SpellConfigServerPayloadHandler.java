@@ -8,11 +8,15 @@ import net.fireboy.mageadditions.compat.irons.IronsSpellConfigBridge;
 import net.fireboy.mageadditions.config.CastTimeOverrides;
 import net.fireboy.mageadditions.config.SpellOverrideConfigService;
 import net.fireboy.mageadditions.spell.SpellTargetingDefaults;
+import net.fireboy.mageadditions.spell.SpellCapabilities;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /** Server-authoritative read/write handling for the in-game spell editor. */
 public final class SpellConfigServerPayloadHandler {
@@ -30,6 +34,31 @@ public final class SpellConfigServerPayloadHandler {
         }
 
         context.reply(snapshot(spell, player, true, "Loaded live server values."));
+    }
+
+    public static void handle(SpellConfigPayloads.StatusRequest payload, IPayloadContext context) {
+        if (!(context.player() instanceof ServerPlayer)) {
+            return;
+        }
+
+        Set<String> mageModified = SpellOverrideConfigService.modifiedSpellIds();
+        List<ResourceLocation> modified = new ArrayList<>();
+
+        for (AbstractSpell spell : SpellRegistry.REGISTRY.stream().toList()) {
+            if (spell == null || spell == SpellRegistry.none()) {
+                continue;
+            }
+
+            boolean changedInIrons = !sameSettings(
+                    IronsSpellConfigBridge.read(spell),
+                    IronsSpellConfigBridge.defaults(spell)
+            );
+            if (changedInIrons || mageModified.contains(spell.getSpellId())) {
+                modified.add(spell.getSpellResource());
+            }
+        }
+
+        context.reply(new SpellConfigPayloads.ModifiedSync(List.copyOf(modified)));
     }
 
     public static void handle(SpellConfigPayloads.Update payload, IPayloadContext context) {
@@ -85,7 +114,10 @@ public final class SpellConfigServerPayloadHandler {
                     payload.maxHeightEnabled() ? payload.maxHeightAboveGround() : null,
                     payload.hasLineOfSightOverride() ? payload.lineOfSightValue() : null,
                     payload.hasMinCastDistance() ? payload.minCastDistance() : null,
-                    toRule(payload.rangeMode(), payload.rangeValue())
+                    toRule(payload.rangeMode(), payload.rangeValue()),
+                    toRule(payload.projectileSpeedMode(), payload.projectileSpeedValue()),
+                    payload.shieldInteraction(),
+                    payload.targetingMode()
             ).normalized();
             CastTimeOverrides.ReloadResult mageResult = SpellOverrideConfigService.saveEditorRules(
                     spell.getSpellId(),
@@ -125,12 +157,26 @@ public final class SpellConfigServerPayloadHandler {
         Boolean losOverride = mage.behavior().lineOfSightOverride();
         Double minOverride = mage.behavior().minCastDistance();
         SpellOverrideConfigService.RuleState rangeRule = mage.behavior().range();
+        SpellOverrideConfigService.RuleState projectileSpeedRule = mage.behavior().projectileSpeed();
+        SpellCapabilities.Capabilities capabilities = SpellCapabilities.detect(spell);
+
+        boolean permission = canEdit(player);
+        boolean editable = permission && backend.writable();
+        String resolvedMessage = message == null ? "" : message;
+        if (success && !editable) {
+            if (!permission) {
+                resolvedMessage = "Loaded live server values, but this player does not have edit permission.";
+            } else if (!backend.writable()) {
+                resolvedMessage = "Loaded live server values, but the detected Iron's config backend is read-only: "
+                        + backend.name();
+            }
+        }
 
         return new SpellConfigPayloads.Snapshot(
                 spell.getSpellResource(),
                 success,
-                message == null ? "" : message,
-                canEdit(player) && backend.writable(),
+                resolvedMessage,
+                editable,
                 backend.name(),
                 iron.enabled(),
                 iron.school(),
@@ -155,7 +201,14 @@ public final class SpellConfigServerPayloadHandler {
                 originalLineOfSight,
                 minOverride != null,
                 minOverride == null ? originalMinDistance : minOverride,
-                originalMinDistance
+                originalMinDistance,
+                capabilities.projectileSpeed(),
+                modeName(projectileSpeedRule),
+                projectileSpeedRule.value(),
+                capabilities.shieldInteraction(),
+                mage.behavior().shieldInteraction(),
+                capabilities.targetingMode(),
+                mage.behavior().targetingMode()
         );
     }
 
@@ -190,8 +243,29 @@ public final class SpellConfigServerPayloadHandler {
                 SpellTargetingDefaults.DEFAULT_REQUIRE_LINE_OF_SIGHT,
                 false,
                 SpellTargetingDefaults.DEFAULT_MIN_DISTANCE,
-                SpellTargetingDefaults.DEFAULT_MIN_DISTANCE
+                SpellTargetingDefaults.DEFAULT_MIN_DISTANCE,
+                false,
+                "off",
+                0.0,
+                false,
+                "vanilla",
+                false,
+                "vanilla"
         );
+    }
+
+    private static boolean sameSettings(
+            IronsSpellConfigBridge.Settings left,
+            IronsSpellConfigBridge.Settings right
+    ) {
+        return left.enabled() == right.enabled()
+                && left.school().equals(right.school())
+                && left.maxLevel() == right.maxLevel()
+                && left.minRarity() == right.minRarity()
+                && Double.compare(left.manaMultiplier(), right.manaMultiplier()) == 0
+                && Double.compare(left.powerMultiplier(), right.powerMultiplier()) == 0
+                && Double.compare(left.cooldownSeconds(), right.cooldownSeconds()) == 0
+                && left.allowCrafting() == right.allowCrafting();
     }
 
     private static AbstractSpell findSpell(ResourceLocation id) {
@@ -200,10 +274,48 @@ public final class SpellConfigServerPayloadHandler {
     }
 
     private static boolean canEdit(ServerPlayer player) {
+        if (player == null) {
+            return false;
+        }
         if (player.hasPermissions(2)) {
             return true;
         }
-        return player.getServer() != null && player.getServer().isSingleplayerOwner(player.getGameProfile());
+
+        var server = player.getServer();
+        if (server == null) {
+            return false;
+        }
+
+        // Vanilla's integrated-server owner check is normally enough, but during
+        // a freshly-created world the singleplayer profile can be populated a few
+        // ticks later than the first config-screen request. Do not permanently
+        // put the local host into read-only mode because of that startup race.
+        if (server.isSingleplayerOwner(player.getGameProfile())) {
+            return true;
+        }
+
+        if (server.isSingleplayer()) {
+            var owner = server.getSingleplayerProfile();
+            if (owner != null) {
+                if (owner.getId() != null && owner.getId().equals(player.getUUID())) {
+                    return true;
+                }
+                if (owner.getName() != null
+                        && owner.getName().equalsIgnoreCase(player.getGameProfile().getName())) {
+                    return true;
+                }
+            }
+
+            // Last-resort integrated-server startup fallback. Before the owner
+            // profile is available there can only be one local player in the new
+            // world, so allowing that sole player is safe. As soon as a LAN guest
+            // exists this fallback no longer applies.
+            if (server.getPlayerList().getPlayerCount() == 1) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void validate(SpellConfigPayloads.Update payload) {
@@ -225,6 +337,9 @@ public final class SpellConfigServerPayloadHandler {
         validateRule(payload.castMode(), payload.castValue(), "Cast time override");
         validateRule(payload.rangeMode(), payload.rangeValue(), "Range override");
         validateMovementMode(payload.movementMode());
+        validateTargetingMode(payload.targetingMode());
+        validateRule(payload.projectileSpeedMode(), payload.projectileSpeedValue(), "Projectile speed override");
+        validateShieldInteraction(payload.shieldInteraction());
         requireFiniteRange(payload.movementMultiplier(), 0.0, 10.0, "Movement multiplier");
         if (payload.maxHeightEnabled()) {
             requireFiniteRange(payload.maxHeightAboveGround(), 0.0, 1_000_000.0, "Maximum height above ground");
@@ -240,6 +355,20 @@ public final class SpellConfigServerPayloadHandler {
             throw new IllegalArgumentException(label + " mode must be off, absolute, or multiplier.");
         }
         requireFiniteRange(value, 0.0, 1_000_000.0, label);
+    }
+
+    private static void validateShieldInteraction(String mode) {
+        String value = mode == null ? "vanilla" : mode.trim().toLowerCase(Locale.ROOT);
+        if (!value.equals("vanilla") && !value.equals("can_disable") && !value.equals("cannot_disable")) {
+            throw new IllegalArgumentException("Shield interaction must be vanilla, can_disable, or cannot_disable.");
+        }
+    }
+
+    private static void validateTargetingMode(String mode) {
+        String value = mode == null ? "vanilla" : mode.trim().toLowerCase(Locale.ROOT);
+        if (!value.equals("vanilla") && !value.equals("self") && !value.equals("others") && !value.equals("both")) {
+            throw new IllegalArgumentException("Targeting mode must be vanilla, self, others, or both.");
+        }
     }
 
     private static void validateMovementMode(String mode) {

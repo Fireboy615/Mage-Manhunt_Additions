@@ -58,9 +58,20 @@ public abstract class UtilsTargetingMixin {
         Boolean lineOfSightOverride = behavior.lineOfSightOverride();
         Double minimum = behavior.minCastDistance();
         boolean hasRangeOverride = behavior.rangeOverride().enabled();
+        CastTimeOverrides.TargetingMode targetingMode = behavior.targetingMode();
+        boolean hasTargetingModeOverride = targetingMode != CastTimeOverrides.TargetingMode.VANILLA;
 
         // No targeting override: preserve Iron's exact original implementation.
-        if (lineOfSightOverride == null && minimum == null && !hasRangeOverride) {
+        if (lineOfSightOverride == null && minimum == null && !hasRangeOverride && !hasTargetingModeOverride) {
+            return;
+        }
+
+        // SELF bypasses entity raycasting entirely. The target filter is an
+        // acquisition concern; an explicit Mage Additions targeting override is
+        // allowed to force the caster into the standard TargetEntityCastData path.
+        if (targetingMode == CastTimeOverrides.TargetingMode.SELF) {
+            setSelfTarget(caster, playerMagicData, spell);
+            cir.setReturnValue(true);
             return;
         }
 
@@ -127,6 +138,12 @@ public abstract class UtilsTargetingMixin {
             return;
         }
 
+        if (targetingMode == CastTimeOverrides.TargetingMode.BOTH) {
+            setSelfTarget(caster, playerMagicData, spell);
+            cir.setReturnValue(true);
+            return;
+        }
+
         if (sendFailureMessage && caster instanceof ServerPlayer serverPlayer) {
             serverPlayer.connection.send(new ClientboundSetActionBarTextPacket(
                     Component.translatable("ui.irons_spellbooks.cast_error_target")
@@ -134,6 +151,22 @@ public abstract class UtilsTargetingMixin {
             ));
         }
         cir.setReturnValue(false);
+    }
+
+    private static void setSelfTarget(
+            LivingEntity caster,
+            MagicData playerMagicData,
+            AbstractSpell spell
+    ) {
+        playerMagicData.setAdditionalCastData(new TargetEntityCastData(caster));
+        if (caster instanceof ServerPlayer serverPlayer) {
+            serverPlayer.connection.send(new ClientboundSetActionBarTextPacket(
+                    Component.translatable(
+                            "ui.irons_spellbooks.spell_target_success_self",
+                            spell.getDisplayName(serverPlayer)
+                    ).withStyle(ChatFormatting.GREEN)
+            ));
+        }
     }
 
     private static void failure(LivingEntity caster, String message, boolean sendFailureMessage) {

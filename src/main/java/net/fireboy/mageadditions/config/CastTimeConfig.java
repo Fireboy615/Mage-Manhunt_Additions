@@ -111,6 +111,18 @@ public final class CastTimeConfig {
          * multiplier values scale the native helper range supplied by the spell.
          */
         public Rule range = null;
+
+        /** Generic projectile velocity override. Absolute = blocks/tick magnitude; multiplier = native velocity x value. */
+        public Rule projectile_speed = null;
+
+        /** vanilla, can_disable, cannot_disable. Only meaningful for direct shield-blockable hits. */
+        public String shield_interaction = "vanilla";
+
+        /**
+         * vanilla, self, others, both. Only exposed for simple entity-target
+         * spells that use Iron's generic preCastTargetHelper + TargetEntityCastData path.
+         */
+        public String targeting_mode = "vanilla";
     }
 
     public static final class SpellReworks {
@@ -119,9 +131,9 @@ public final class CastTimeConfig {
 
     public static final class Settings {
         /**
-         * Iron's INSTANT spells use one-shot casting behaviour/animation.
-         * Leave false unless a spell has a dedicated rework that safely changes
-         * its CastType (targeted Counterspell already does this itself).
+         * Legacy compatibility option. Explicit per-spell cast-time overrides
+         * now count as the opt-in for delaying INSTANT spells, so this value is
+         * retained only to keep older mage_additions.json files compatible.
          */
         public boolean allow_instant_spell_delays = false;
 

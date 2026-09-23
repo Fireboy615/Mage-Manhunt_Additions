@@ -19,11 +19,17 @@ public final class SpellConfigNetwork {
 
     @SubscribeEvent
     public static void register(RegisterPayloadHandlersEvent event) {
-        PayloadRegistrar registrar = event.registrar("9");
+        PayloadRegistrar registrar = event.registrar("12");
 
         registrar.playToServer(
                 SpellConfigPayloads.Request.TYPE,
                 SpellConfigPayloads.Request.STREAM_CODEC,
+                SpellConfigServerPayloadHandler::handle
+        );
+
+        registrar.playToServer(
+                SpellConfigPayloads.StatusRequest.TYPE,
+                SpellConfigPayloads.StatusRequest.STREAM_CODEC,
                 SpellConfigServerPayloadHandler::handle
         );
 
@@ -36,6 +42,12 @@ public final class SpellConfigNetwork {
         registrar.playToClient(
                 SpellConfigPayloads.Snapshot.TYPE,
                 SpellConfigPayloads.Snapshot.STREAM_CODEC,
+                SpellConfigClientPayloadHandler::handle
+        );
+
+        registrar.playToClient(
+                SpellConfigPayloads.ModifiedSync.TYPE,
+                SpellConfigPayloads.ModifiedSync.STREAM_CODEC,
                 SpellConfigClientPayloadHandler::handle
         );
 

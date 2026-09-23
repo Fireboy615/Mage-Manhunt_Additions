@@ -5,6 +5,7 @@ import io.redspace.ironsspellbooks.api.spells.AbstractSpell;
 import io.redspace.ironsspellbooks.api.spells.SpellRarity;
 import net.fireboy.mageadditions.MageAdditions;
 import net.fireboy.mageadditions.client.SpellEditorScreen;
+import net.fireboy.mageadditions.client.SpellManagerScreen;
 import net.fireboy.mageadditions.compat.irons.IronsSpellConfigBridge;
 import net.fireboy.mageadditions.mixin.CreativeModeTabsAccessor;
 import net.minecraft.client.Minecraft;
@@ -23,6 +24,15 @@ public final class SpellConfigClientPayloadHandler {
         minecraft.execute(() -> {
             if (minecraft.screen instanceof SpellEditorScreen screen) {
                 screen.applyServerSnapshot(payload);
+            }
+        });
+    }
+
+    public static void handle(SpellConfigPayloads.ModifiedSync payload, IPayloadContext context) {
+        Minecraft minecraft = Minecraft.getInstance();
+        minecraft.execute(() -> {
+            if (minecraft.screen instanceof SpellManagerScreen screen) {
+                screen.applyModifiedStatus(payload.spellIds());
             }
         });
     }

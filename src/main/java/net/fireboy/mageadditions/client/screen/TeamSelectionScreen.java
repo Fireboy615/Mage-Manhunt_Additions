@@ -15,6 +15,7 @@ import net.fireboy.mageadditions.network.payload.SelectTeamPayload;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.Renderable;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -142,7 +143,8 @@ public final class TeamSelectionScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(graphics, mouseX, mouseY, partialTick);
+        // Keep the in-game world sharp; Screen#renderBackground applies the vanilla menu blur.
+        graphics.fill(0, 0, width, height, 0x88000000);
         Layout layout = layout();
         graphics.fill(layout.left, layout.top, layout.left + layout.leftW, layout.bottom, 0x76000000);
         graphics.fill(layout.right, layout.top, layout.right + layout.rightW, layout.bottom, 0x76000000);
@@ -176,7 +178,9 @@ public final class TeamSelectionScreen extends Screen {
         if (canManage) {
             graphics.drawCenteredString(font, Component.translatable(allReady ? "screen.mageadditions.team_selection.host_ready" : "screen.mageadditions.team_selection.host_waiting"), layout.centerX, layout.bottom - 12, allReady ? 0x77FF77 : 0xFFAA55);
         }
-        super.render(graphics, mouseX, mouseY, partialTick);
+        for (Renderable renderable : renderables) {
+            renderable.render(graphics, mouseX, mouseY, partialTick);
+        }
     }
 
     private int drawInfoLine(GuiGraphics graphics, Component label, String value, int x, int y) {

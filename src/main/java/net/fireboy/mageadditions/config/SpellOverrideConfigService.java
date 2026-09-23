@@ -10,7 +10,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Common/server-safe editor for Mage Additions' generic per-spell overrides.
@@ -35,6 +37,40 @@ public final class SpellOverrideConfigService {
             );
         } catch (Exception ignored) {
             return SpellRules.defaults();
+        }
+    }
+
+    /**
+     * Returns every spell id that has a non-default Mage Additions override.
+     * The config document is parsed only once so the spell-manager status
+     * request does not reread the JSON file once per registered spell.
+     */
+    public static Set<String> modifiedSpellIds() {
+        try {
+            Document document = readDocument();
+            CastTimeConfig.BalanceTweaks balance = readBalance(document.root, document.config);
+            Set<String> result = new LinkedHashSet<>();
+
+            collectEnabledRules(result, balance.cast_time_overrides);
+            collectEnabledRules(result, balance.mana_cost_overrides);
+            collectEnabledRules(result, balance.cooldown_overrides);
+
+            for (Map.Entry<String, CastTimeConfig.SpellBehavior> entry : balance.spell_behavior_overrides.entrySet()) {
+                if (!toBehaviorState(entry.getValue()).isDefault()) {
+                    result.add(entry.getKey());
+                }
+            }
+            return Set.copyOf(result);
+        } catch (Exception ignored) {
+            return Set.of();
+        }
+    }
+
+    private static void collectEnabledRules(Set<String> output, Map<String, CastTimeConfig.Rule> rules) {
+        for (Map.Entry<String, CastTimeConfig.Rule> entry : rules.entrySet()) {
+            if (toState(entry.getValue()).enabled()) {
+                output.add(entry.getKey());
+            }
         }
     }
 
@@ -196,7 +232,10 @@ public final class SpellOverrideConfigService {
                 maxHeight == null ? null : (nullableDistance(maxHeight) == null ? 10.0 : maxHeight),
                 requireLineOfSight,
                 nullableDistance(behavior.min_cast_distance),
-                toState(behavior.range)
+                toState(behavior.range),
+                toState(behavior.projectile_speed),
+                normalizeShieldInteraction(behavior.shield_interaction),
+                normalizeTargetingMode(behavior.targeting_mode)
         ).normalized();
     }
 
@@ -225,6 +264,9 @@ public final class SpellOverrideConfigService {
 
         behavior.min_cast_distance = safe.minCastDistance();
         behavior.range = toConfigRule(safe.range());
+        behavior.projectile_speed = toConfigRule(safe.projectileSpeed());
+        behavior.shield_interaction = safe.shieldInteraction();
+        behavior.targeting_mode = safe.targetingMode();
         map.put(spellId, behavior);
     }
 
@@ -237,6 +279,22 @@ public final class SpellOverrideConfigService {
         rule.mode = normalizeMode(state.mode());
         rule.value = state.value();
         return rule;
+    }
+
+    private static String normalizeShieldInteraction(String mode) {
+        if (mode == null) return "vanilla";
+        return switch (mode.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "can_disable", "cannot_disable" -> mode.trim().toLowerCase(java.util.Locale.ROOT);
+            default -> "vanilla";
+        };
+    }
+
+    private static String normalizeTargetingMode(String mode) {
+        if (mode == null) return "vanilla";
+        return switch (mode.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "self", "others", "both" -> mode.trim().toLowerCase(java.util.Locale.ROOT);
+            default -> "vanilla";
+        };
     }
 
     private static String normalizeMovement(String mode) {
@@ -518,10 +576,13 @@ public final class SpellOverrideConfigService {
             Double maxHeightAboveGround,
             Boolean lineOfSightOverride,
             Double minCastDistance,
-            RuleState range
+            RuleState range,
+            RuleState projectileSpeed,
+            String shieldInteraction,
+            String targetingMode
     ) {
         public static BehaviorState defaults() {
-            return new BehaviorState(false, "default", 0.5, null, null, null, RuleState.disabled());
+            return new BehaviorState(false, "default", 0.5, null, null, null, RuleState.disabled(), RuleState.disabled(), "vanilla", "vanilla");
         }
 
         public BehaviorState normalized() {
@@ -538,6 +599,7 @@ public final class SpellOverrideConfigService {
 
             Double min = nullableDistance(minCastDistance);
             RuleState rangeRule = normalizeRuleState(range);
+            RuleState projectileRule = normalizeRuleState(projectileSpeed);
 
             return new BehaviorState(
                     enabled,
@@ -546,7 +608,10 @@ public final class SpellOverrideConfigService {
                     maxHeight,
                     lineOfSightOverride,
                     min,
-                    rangeRule
+                    rangeRule,
+                    projectileRule,
+                    normalizeShieldInteraction(shieldInteraction),
+                    normalizeTargetingMode(targetingMode)
             );
         }
 
@@ -557,7 +622,10 @@ public final class SpellOverrideConfigService {
                     && value.maxHeightAboveGround == null
                     && value.lineOfSightOverride == null
                     && value.minCastDistance == null
-                    && !value.range.enabled();
+                    && !value.range.enabled()
+                    && !value.projectileSpeed.enabled()
+                    && value.shieldInteraction.equals("vanilla")
+                    && value.targetingMode.equals("vanilla");
         }
     }
 

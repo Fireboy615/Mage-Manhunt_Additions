@@ -177,14 +177,38 @@ public final class CastTimeOverrides {
 
         int resolvedTicks = clampRounded(result, current.maxCastTimeTicks);
 
-        // Do not silently turn ordinary INSTANT spells into delayed spells.
-        if (spell.getCastType() == CastType.INSTANT
-                && resolvedTicks > 0
-                && !current.allowInstantSpellDelays) {
-            return originalEffectiveTicks;
+        // A per-spell cast-time rule is an explicit opt-in, including for
+        // Iron's INSTANT spells. A positive resolved duration is promoted to a
+        // LONG active-cast state by MagicDataMixin so Iron's normal casting UI,
+        // animation and interruption state can participate without permanently
+        // changing the spell's declared CastType. MULTIPLIER still naturally
+        // resolves to 0 for native 0-tick spells.
+        return resolvedTicks;
+    }
+
+    /**
+     * True when this spell has an explicit positive cast-time override while its
+     * native Iron's cast type is INSTANT. The server uses the resolved duration
+     * as the authoritative signal for the active cast; this helper is also a
+     * client-side fallback for presentation (for example remote-player
+     * animations) when the same config is available locally.
+     */
+    public static boolean usesDelayedInstantPresentation(AbstractSpell spell) {
+        Snapshot current = snapshot;
+        if (spell == null || spell.getCastType() != CastType.INSTANT
+                || !current.balanceTweaksEnabled || !spellOverridesEnabled(current, spell)) {
+            return false;
         }
 
-        return resolvedTicks;
+        CompiledRule rule = current.castTimeRules.get(spell.getSpellId());
+        if (rule == null) {
+            return false;
+        }
+
+        // Native INSTANT spells have a zero base duration. Therefore only an
+        // ABSOLUTE rule can intentionally create a delayed cast.
+        return rule.mode == Mode.ABSOLUTE
+                && clampRounded(rule.value, current.maxCastTimeTicks) > 0;
     }
 
     /**
@@ -252,6 +276,18 @@ public final class CastTimeOverrides {
      * Applies Mage Additions' generic target-range override. The original value
      * is the range Iron's supplied to preCastTargetHelper for this spell.
      */
+    /** Applies the generic projectile-speed override to a native velocity magnitude. */
+    public static double resolveProjectileSpeed(AbstractSpell spell, double originalSpeed) {
+        NumericOverride override = behavior(spell).projectileSpeedOverride();
+        if (!override.enabled() || !Double.isFinite(originalSpeed) || originalSpeed < 0.0) {
+            return originalSpeed;
+        }
+        double resolved = override.mode() == NumericMode.MULTIPLIER
+                ? originalSpeed * override.value()
+                : override.value();
+        return Math.max(0.0, Math.min(1_000_000.0, resolved));
+    }
+
     public static double resolveTargetRange(AbstractSpell spell, double originalRange) {
         if (spell == null || !Double.isFinite(originalRange) || originalRange < 0.0) {
             return Double.isFinite(originalRange) ? Math.max(0.0, originalRange) : 0.0;
@@ -497,12 +533,18 @@ public final class CastTimeOverrides {
             Double maxHeight = migratedMaxHeight(raw);
             Boolean requireLineOfSight = migratedLineOfSight(raw);
             NumericOverride rangeOverride = compileBehaviorNumericOverride(raw.range);
+            NumericOverride projectileSpeedOverride = compileBehaviorNumericOverride(raw.projectile_speed);
+            ShieldInteraction shieldInteraction = ShieldInteraction.parse(raw.shield_interaction);
+            TargetingMode targetingMode = TargetingMode.parse(raw.targeting_mode);
             if (movement == null
                     || !Double.isFinite(raw.movement_multiplier)
                     || raw.movement_multiplier < 0.0 || raw.movement_multiplier > 10.0
                     || !validOptionalDistance(maxHeight)
                     || !validOptionalDistance(raw.min_cast_distance)
-                    || rangeOverride == null) {
+                    || rangeOverride == null
+                    || projectileSpeedOverride == null
+                    || shieldInteraction == null
+                    || targetingMode == null) {
                 MageAdditions.LOGGER.warn("Ignoring invalid spell behaviour rule for '{}'", entry.getKey());
                 skipped++;
                 continue;
@@ -515,7 +557,10 @@ public final class CastTimeOverrides {
                     maxHeight,
                     requireLineOfSight,
                     raw.min_cast_distance,
-                    rangeOverride
+                    rangeOverride,
+                    projectileSpeedOverride,
+                    shieldInteraction,
+                    targetingMode
             ));
         }
         return new BehaviorCompileResult(compiled, skipped);
@@ -890,9 +935,9 @@ public final class CastTimeOverrides {
               // ================================================================
               "balance_tweaks": {
                 "settings": {
-                  // false prevents ordinary INSTANT spells from being turned into
-                  // delayed casts by generic cast-time rules. Dedicated spell
-                  // reworks can still safely change CastType themselves.
+                  // Legacy compatibility field. Explicit per-spell Absolute
+                  // cast-time overrides now act as the opt-in for delaying
+                  // INSTANT spells, so this value no longer gates them.
                   "allow_instant_spell_delays": false,
 
                   // Safety cap. Cast time uses ticks: 20 ticks = 1 second.
@@ -959,6 +1004,9 @@ public final class CastTimeOverrides {
                   //   },
                   //   "require_line_of_sight": true,      // true or false; omit to inherit
                   //   "min_cast_distance": 3.0,           // omit to inherit native minimum
+                  //   "projectile_speed": { "enabled": true, "mode": "multiplier", "value": 1.5 },
+                  //   "shield_interaction": "cannot_disable", // vanilla, can_disable, cannot_disable
+                  //   "targeting_mode": "both"               // vanilla, self, others, both
                   // }
                 }
               },
@@ -1057,6 +1105,34 @@ public final class CastTimeOverrides {
         }
     }
 
+    public enum ShieldInteraction {
+        VANILLA, CAN_DISABLE, CANNOT_DISABLE;
+
+        static ShieldInteraction parse(String raw) {
+            if (raw == null) return VANILLA;
+            try { return valueOf(raw.trim().toUpperCase(Locale.ROOT)); }
+            catch (IllegalArgumentException ignored) { return null; }
+        }
+    }
+
+    public enum TargetingMode {
+        VANILLA, SELF, OTHERS, BOTH;
+
+        static TargetingMode parse(String raw) {
+            if (raw == null) return VANILLA;
+            try { return valueOf(raw.trim().toUpperCase(Locale.ROOT)); }
+            catch (IllegalArgumentException ignored) { return null; }
+        }
+
+        public boolean allowsSelf() {
+            return this == SELF || this == BOTH;
+        }
+
+        public boolean allowsOthers() {
+            return this == OTHERS || this == BOTH || this == VANILLA;
+        }
+    }
+
     public enum NumericMode {
         ABSOLUTE, MULTIPLIER;
 
@@ -1080,7 +1156,10 @@ public final class CastTimeOverrides {
             Double maxHeightAboveGround,
             Boolean lineOfSightOverride,
             Double minCastDistance,
-            NumericOverride rangeOverride
+            NumericOverride rangeOverride,
+            NumericOverride projectileSpeedOverride,
+            ShieldInteraction shieldInteraction,
+            TargetingMode targetingMode
     ) {
         /** Untouched spells have no Mage Additions overrides by default. */
         public static BehaviorSettings defaults() {
@@ -1090,7 +1169,7 @@ public final class CastTimeOverrides {
         /** No Mage Additions behaviour when the per-spell master switch is off. */
         public static BehaviorSettings disabled() {
             return new BehaviorSettings(
-                    false, MovementMode.DEFAULT, 0.5, null, null, null, NumericOverride.disabled()
+                    false, MovementMode.DEFAULT, 0.5, null, null, null, NumericOverride.disabled(), NumericOverride.disabled(), ShieldInteraction.VANILLA, TargetingMode.VANILLA
             );
         }
     }

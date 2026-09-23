@@ -44,6 +44,7 @@ public final class SpellEditorScreen extends Screen {
     private static final int SCROLLBAR_WIDTH = 5;
     private static final int SCROLLBAR_MIN_THUMB_HEIGHT = 20;
     private static final int SCROLL_WHEEL_PIXELS = 28;
+    private static final int SNAPSHOT_RETRY_TICKS = 40;
 
     private enum ScrollSection {
         IRON,
@@ -55,6 +56,7 @@ public final class SpellEditorScreen extends Screen {
 
     private boolean canEdit;
     private boolean waitingForServerSnapshot;
+    private int snapshotWaitTicks;
     private String backendName = "";
     private Component status = Component.empty();
     private int originalMaxLevel;
@@ -81,6 +83,12 @@ public final class SpellEditorScreen extends Screen {
     private Button lineOfSightButton;
     private Button lineOfSightResetButton;
     private Button minCastDistanceResetButton;
+    private Button projectileSpeedModeButton;
+    private Button projectileSpeedResetButton;
+    private Button shieldInteractionButton;
+    private Button shieldInteractionResetButton;
+    private Button targetingModeButton;
+    private Button targetingModeResetButton;
     private Button saveButton;
     private Button counterspellButton;
     private Button ironsTabButton;
@@ -118,6 +126,7 @@ public final class SpellEditorScreen extends Screen {
     private EditBox movementMultiplierBox;
     private EditBox maxHeightAboveGroundBox;
     private EditBox minCastDistanceBox;
+    private EditBox projectileSpeedValueBox;
     private LinkedNumericOverrideControl castControl;
     private LinkedNumericOverrideControl rangeControl;
 
@@ -130,6 +139,12 @@ public final class SpellEditorScreen extends Screen {
     private double originalTargetRange = 32.0;
     private double originalMinCastDistance = 0.0;
     private boolean minCastDistanceOverrideActive = false;
+    private boolean supportsProjectileSpeed = false;
+    private String projectileSpeedMode = "off";
+    private boolean supportsShieldInteraction = false;
+    private String shieldInteraction = "vanilla";
+    private boolean supportsTargetingMode = false;
+    private String targetingMode = "vanilla";
     private boolean updatingBehaviorFields = false;
 
     public SpellEditorScreen(Screen parent, AbstractSpell spell) {
@@ -319,6 +334,12 @@ public final class SpellEditorScreen extends Screen {
         y += this.rowGap;
         y += this.rowGap;
 
+        this.targetingModeButton = addRenderableWidget(Button.builder(targetingModeLabel(), b -> cycleTargetingMode())
+                .bounds(mageFieldX, y, mageControlWidth, FIELD_HEIGHT).build());
+        this.targetingModeResetButton = addRenderableWidget(Button.builder(Component.literal("Reset"), b -> resetTargetingMode())
+                .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
+        y += this.rowGap;
+
         // Original range is render-only. It is supplied by the server because
         // Iron's passes this value dynamically to its generic target helper.
         y += this.rowGap;
@@ -360,6 +381,21 @@ public final class SpellEditorScreen extends Screen {
                 .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
         y += this.rowGap;
 
+        // GENERIC CAPABILITY OVERRIDES. The server decides whether these apply.
+        y += this.rowGap;
+        this.projectileSpeedModeButton = addRenderableWidget(Button.builder(projectileSpeedModeLabel(), b -> cycleProjectileSpeedMode())
+                .bounds(mageFieldX, y, 96, FIELD_HEIGHT).build());
+        this.projectileSpeedValueBox = numericBox(mageFieldX + 100, y, "1", Math.max(44, mageControlWidth - 100));
+        this.projectileSpeedResetButton = addRenderableWidget(Button.builder(Component.literal("Reset"), b -> resetProjectileSpeed())
+                .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
+        y += this.rowGap;
+
+        this.shieldInteractionButton = addRenderableWidget(Button.builder(shieldInteractionLabel(), b -> cycleShieldInteraction())
+                .bounds(mageFieldX, y, mageControlWidth, FIELD_HEIGHT).build());
+        this.shieldInteractionResetButton = addRenderableWidget(Button.builder(Component.literal("Reset"), b -> resetShieldInteraction())
+                .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
+        y += this.rowGap;
+
         y += this.rowGap * 2;
         if (this.spell.getSpellId().equals("irons_spellbooks:counterspell")) {
             this.counterspellButton = addRenderableWidget(Button.builder(Component.literal("Counterspell Rework Settings..."), b -> {
@@ -382,6 +418,8 @@ public final class SpellEditorScreen extends Screen {
         registerScrollable(this.maxHeightToggleButton, ScrollSection.MAGE);
         registerScrollable(this.maxHeightAboveGroundBox, ScrollSection.MAGE);
         registerScrollable(this.maxHeightResetButton, ScrollSection.MAGE);
+        registerScrollable(this.targetingModeButton, ScrollSection.MAGE);
+        registerScrollable(this.targetingModeResetButton, ScrollSection.MAGE);
         registerScrollable(this.rangeValueBox, ScrollSection.MAGE);
         registerScrollable(this.rangeResetButton, ScrollSection.MAGE);
         registerScrollable(this.rangeMultiplierBox, ScrollSection.MAGE);
@@ -389,9 +427,17 @@ public final class SpellEditorScreen extends Screen {
         registerScrollable(this.lineOfSightResetButton, ScrollSection.MAGE);
         registerScrollable(this.minCastDistanceBox, ScrollSection.MAGE);
         registerScrollable(this.minCastDistanceResetButton, ScrollSection.MAGE);
+        registerScrollable(this.projectileSpeedModeButton, ScrollSection.MAGE);
+        registerScrollable(this.projectileSpeedValueBox, ScrollSection.MAGE);
+        registerScrollable(this.projectileSpeedResetButton, ScrollSection.MAGE);
+        registerScrollable(this.shieldInteractionButton, ScrollSection.MAGE);
+        registerScrollable(this.shieldInteractionResetButton, ScrollSection.MAGE);
         registerScrollable(this.counterspellButton, ScrollSection.MAGE);
 
-        int lastMageWidgetBottom = this.minCastDistanceResetButton.getY() + this.minCastDistanceResetButton.getHeight();
+        int lastMageWidgetBottom = Math.max(
+                this.minCastDistanceResetButton.getY() + this.minCastDistanceResetButton.getHeight(),
+                this.shieldInteractionResetButton.getY() + this.shieldInteractionResetButton.getHeight()
+        );
         if (this.counterspellButton != null) {
             lastMageWidgetBottom = Math.max(lastMageWidgetBottom, this.counterspellButton.getY() + this.counterspellButton.getHeight());
         }
@@ -421,13 +467,37 @@ public final class SpellEditorScreen extends Screen {
         updateSectionVisibility();
 
         if (this.minecraft != null && this.minecraft.getConnection() != null) {
-            this.waitingForServerSnapshot = true;
-            this.status = Component.literal("Loading live server values...").withStyle(ChatFormatting.YELLOW);
-            PacketDistributor.sendToServer(new SpellConfigPayloads.Request(this.spell.getSpellResource()));
+            requestServerSnapshot(false);
         } else {
             this.waitingForServerSnapshot = false;
             this.status = Component.literal("Load a world/server to edit spell balance live.").withStyle(ChatFormatting.YELLOW);
         }
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+
+        if (!this.waitingForServerSnapshot) {
+            return;
+        }
+
+        this.snapshotWaitTicks++;
+        if (this.snapshotWaitTicks >= SNAPSHOT_RETRY_TICKS
+                && this.minecraft != null
+                && this.minecraft.getConnection() != null) {
+            requestServerSnapshot(true);
+        }
+    }
+
+    private void requestServerSnapshot(boolean retry) {
+        this.waitingForServerSnapshot = true;
+        this.snapshotWaitTicks = 0;
+        this.status = Component.literal(retry
+                        ? "Still waiting for the server - retrying live spell values..."
+                        : "Loading live server values...")
+                .withStyle(ChatFormatting.YELLOW);
+        PacketDistributor.sendToServer(new SpellConfigPayloads.Request(this.spell.getSpellResource()));
     }
 
     private void registerScrollable(AbstractWidget widget, ScrollSection section) {
@@ -589,12 +659,19 @@ public final class SpellEditorScreen extends Screen {
         setVisible(this.maxHeightToggleButton, showMage);
         setVisible(this.maxHeightAboveGroundBox, showMage);
         setVisible(this.maxHeightResetButton, showMage);
+        setVisible(this.targetingModeButton, showMage && this.supportsTargetingMode);
+        setVisible(this.targetingModeResetButton, showMage && this.supportsTargetingMode);
         if (this.rangeControl != null) this.rangeControl.setVisible(showMage);
         setVisible(this.rangeResetButton, showMage);
         setVisible(this.lineOfSightButton, showMage);
         setVisible(this.lineOfSightResetButton, showMage);
         setVisible(this.minCastDistanceBox, showMage);
         setVisible(this.minCastDistanceResetButton, showMage);
+        setVisible(this.projectileSpeedModeButton, showMage && this.supportsProjectileSpeed);
+        setVisible(this.projectileSpeedValueBox, showMage && this.supportsProjectileSpeed);
+        setVisible(this.projectileSpeedResetButton, showMage && this.supportsProjectileSpeed);
+        setVisible(this.shieldInteractionButton, showMage && this.supportsShieldInteraction);
+        setVisible(this.shieldInteractionResetButton, showMage && this.supportsShieldInteraction);
         setVisible(this.counterspellButton, showMage);
 
         if (this.ironsTabButton != null) {
@@ -667,15 +744,106 @@ public final class SpellEditorScreen extends Screen {
         if (this.maxHeightAboveGroundBox != null) this.maxHeightAboveGroundBox.active = mageEnabled && this.maxHeightEnabled;
         if (this.maxHeightResetButton != null) this.maxHeightResetButton.active = mageEnabled
                 && (this.maxHeightEnabled || !"10".equals(this.maxHeightAboveGroundBox.getValue().trim()));
+        if (this.targetingModeButton != null) this.targetingModeButton.active = mageEnabled && this.supportsTargetingMode;
+        if (this.targetingModeResetButton != null) this.targetingModeResetButton.active = mageEnabled && this.supportsTargetingMode && !"vanilla".equals(this.targetingMode);
         if (this.lineOfSightButton != null) this.lineOfSightButton.active = mageEnabled;
         if (this.lineOfSightResetButton != null) this.lineOfSightResetButton.active = mageEnabled && this.lineOfSightOverrideActive;
         if (this.minCastDistanceBox != null) this.minCastDistanceBox.active = mageEnabled;
         if (this.minCastDistanceResetButton != null) this.minCastDistanceResetButton.active = mageEnabled && this.minCastDistanceOverrideActive;
+        if (this.projectileSpeedModeButton != null) this.projectileSpeedModeButton.active = mageEnabled && this.supportsProjectileSpeed;
+        if (this.projectileSpeedValueBox != null) this.projectileSpeedValueBox.active = mageEnabled && this.supportsProjectileSpeed && !"off".equals(this.projectileSpeedMode);
+        if (this.projectileSpeedResetButton != null) this.projectileSpeedResetButton.active = mageEnabled && this.supportsProjectileSpeed && !"off".equals(this.projectileSpeedMode);
+        if (this.shieldInteractionButton != null) this.shieldInteractionButton.active = mageEnabled && this.supportsShieldInteraction;
+        if (this.shieldInteractionResetButton != null) this.shieldInteractionResetButton.active = mageEnabled && this.supportsShieldInteraction && !"vanilla".equals(this.shieldInteraction);
         if (this.counterspellButton != null) this.counterspellButton.active = enabled;
 
         this.saveButton.active = enabled;
         updateCastControlPresentation();
         updateRangeControlPresentation();
+    }
+
+    private Component targetingModeLabel() {
+        String label = switch (this.targetingMode) {
+            case "self" -> "Self only";
+            case "others" -> "Others only";
+            case "both" -> "Self + Others";
+            default -> "Vanilla";
+        };
+        return Component.literal(label);
+    }
+
+    private void cycleTargetingMode() {
+        this.targetingMode = switch (this.targetingMode) {
+            case "vanilla" -> "self";
+            case "self" -> "others";
+            case "others" -> "both";
+            default -> "vanilla";
+        };
+        refreshGenericOverrideButtons();
+        setEditingEnabled(this.canEdit);
+    }
+
+    private void resetTargetingMode() {
+        this.targetingMode = "vanilla";
+        refreshGenericOverrideButtons();
+        setEditingEnabled(this.canEdit);
+    }
+
+    private Component projectileSpeedModeLabel() {
+        String label = switch (this.projectileSpeedMode) {
+            case "absolute" -> "Absolute";
+            case "multiplier" -> "Multiplier";
+            default -> "Vanilla";
+        };
+        return Component.literal(label);
+    }
+
+    private void cycleProjectileSpeedMode() {
+        this.projectileSpeedMode = switch (this.projectileSpeedMode) {
+            case "off" -> "multiplier";
+            case "multiplier" -> "absolute";
+            default -> "off";
+        };
+        refreshGenericOverrideButtons();
+        setEditingEnabled(this.canEdit);
+    }
+
+    private void resetProjectileSpeed() {
+        this.projectileSpeedMode = "off";
+        this.projectileSpeedValueBox.setValue("1");
+        refreshGenericOverrideButtons();
+        setEditingEnabled(this.canEdit);
+    }
+
+    private Component shieldInteractionLabel() {
+        String label = switch (this.shieldInteraction) {
+            case "can_disable" -> "Can disable shields";
+            case "cannot_disable" -> "Cannot disable shields";
+            default -> "Vanilla";
+        };
+        return Component.literal(label);
+    }
+
+    private void cycleShieldInteraction() {
+        this.shieldInteraction = switch (this.shieldInteraction) {
+            case "vanilla" -> "can_disable";
+            case "can_disable" -> "cannot_disable";
+            default -> "vanilla";
+        };
+        refreshGenericOverrideButtons();
+        setEditingEnabled(this.canEdit);
+    }
+
+    private void resetShieldInteraction() {
+        this.shieldInteraction = "vanilla";
+        refreshGenericOverrideButtons();
+        setEditingEnabled(this.canEdit);
+    }
+
+    private void refreshGenericOverrideButtons() {
+        if (this.projectileSpeedModeButton != null) this.projectileSpeedModeButton.setMessage(projectileSpeedModeLabel());
+        if (this.shieldInteractionButton != null) this.shieldInteractionButton.setMessage(shieldInteractionLabel());
+        if (this.targetingModeButton != null) this.targetingModeButton.setMessage(targetingModeLabel());
     }
 
     private void cycleSchool() {
@@ -725,6 +893,11 @@ public final class SpellEditorScreen extends Screen {
         this.lineOfSightOverrideActive = false;
         this.minCastDistanceOverrideActive = false;
         setBehaviorBoxValue(this.minCastDistanceBox, format(this.originalMinCastDistance));
+        this.projectileSpeedMode = "off";
+        this.projectileSpeedValueBox.setValue("1");
+        this.shieldInteraction = "vanilla";
+        this.targetingMode = "vanilla";
+        refreshGenericOverrideButtons();
         refreshBehaviorButtons();
         updateCastControlPresentation();
         updateRangeControlPresentation();
@@ -751,6 +924,7 @@ public final class SpellEditorScreen extends Screen {
             double movementMultiplier = parseDouble(this.movementMultiplierBox, "Movement multiplier", 0.0, 10.0);
             double maxHeightAboveGround = parseDouble(this.maxHeightAboveGroundBox, "Maximum height above ground", 0.0, 1_000_000.0);
             double minCastDistance = parseDouble(this.minCastDistanceBox, "Minimum cast distance", 0.0, 1_000_000.0);
+            double projectileSpeedValue = parseDouble(this.projectileSpeedValueBox, "Projectile speed", 0.0, 1_000_000.0);
 
             this.waitingForServerSnapshot = true;
             this.status = Component.literal("Saving to server...").withStyle(ChatFormatting.YELLOW);
@@ -778,7 +952,11 @@ public final class SpellEditorScreen extends Screen {
                     this.lineOfSightOverrideActive,
                     this.lineOfSightValue,
                     this.minCastDistanceOverrideActive,
-                    minCastDistance
+                    minCastDistance,
+                    this.supportsProjectileSpeed ? this.projectileSpeedMode : "off",
+                    projectileSpeedValue,
+                    this.supportsShieldInteraction ? this.shieldInteraction : "vanilla",
+                    this.supportsTargetingMode ? this.targetingMode : "vanilla"
             ));
         } catch (Exception exception) {
             this.waitingForServerSnapshot = false;
@@ -795,6 +973,7 @@ public final class SpellEditorScreen extends Screen {
         }
 
         this.waitingForServerSnapshot = false;
+        this.snapshotWaitTicks = 0;
         this.backendName = snapshot.backendName();
         this.canEdit = snapshot.canEdit();
 
@@ -835,7 +1014,15 @@ public final class SpellEditorScreen extends Screen {
         this.originalMinCastDistance = snapshot.originalMinCastDistance();
         this.minCastDistanceOverrideActive = snapshot.hasMinCastDistance();
         setBehaviorBoxValue(this.minCastDistanceBox, format(snapshot.minCastDistance()));
+        this.supportsProjectileSpeed = snapshot.supportsProjectileSpeed();
+        this.projectileSpeedMode = snapshot.projectileSpeedMode();
+        this.projectileSpeedValueBox.setValue(format(snapshot.projectileSpeedValue()));
+        this.supportsShieldInteraction = snapshot.supportsShieldInteraction();
+        this.shieldInteraction = snapshot.shieldInteraction();
+        this.supportsTargetingMode = snapshot.supportsTargetingMode();
+        this.targetingMode = snapshot.targetingMode();
         refreshBehaviorButtons();
+        refreshGenericOverrideButtons();
 
         setEditingEnabled(this.canEdit);
         updateSectionVisibility();
@@ -899,6 +1086,10 @@ public final class SpellEditorScreen extends Screen {
     private void resetMinCastDistance() {
         this.minCastDistanceOverrideActive = false;
         setBehaviorBoxValue(this.minCastDistanceBox, format(this.originalMinCastDistance));
+        this.projectileSpeedMode = "off";
+        this.projectileSpeedValueBox.setValue("1");
+        this.shieldInteraction = "vanilla";
+        refreshGenericOverrideButtons();
         setEditingEnabled(this.canEdit);
     }
 
@@ -1095,6 +1286,10 @@ public final class SpellEditorScreen extends Screen {
 
         graphics.drawString(this.font, Component.literal("TARGETING").withStyle(ChatFormatting.LIGHT_PURPLE), x, y, 0xFFFFFF);
         y += this.rowGap;
+        if (this.supportsTargetingMode) {
+            drawLabel(graphics, x, y, "Targeting mode");
+        }
+        y += this.rowGap;
         graphics.drawString(
                 this.font,
                 Component.literal("Original range: " + format(this.originalTargetRange) + " blocks")
@@ -1111,6 +1306,17 @@ public final class SpellEditorScreen extends Screen {
         drawLabel(graphics, x, y, "Require line of sight");
         y += this.rowGap;
         drawLabel(graphics, x, y, "Min cast distance (blocks)");
+        y += this.rowGap;
+
+        graphics.drawString(this.font, Component.literal("GENERIC CAPABILITIES").withStyle(ChatFormatting.LIGHT_PURPLE), x, y, 0xFFFFFF);
+        y += this.rowGap;
+        if (this.supportsProjectileSpeed) {
+            drawLabel(graphics, x, y, "Projectile speed");
+        }
+        y += this.rowGap;
+        if (this.supportsShieldInteraction) {
+            drawLabel(graphics, x, y, "Shield interaction");
+        }
         y += this.rowGap;
 
         int helpY = y + this.rowGap;
@@ -1136,7 +1342,7 @@ public final class SpellEditorScreen extends Screen {
                 && this.castControl.authority() != LinkedNumericOverrideControl.Authority.DEFAULT) {
             graphics.drawWordWrap(
                     this.font,
-                    Component.literal("Instant-spell delays require explicit support or allow_instant_spell_delays.")
+                    Component.literal("Instant spells have a native cast time of 0. Use Absolute to add a delay; Multiplier will remain 0.")
                             .withStyle(ChatFormatting.GRAY),
                     x,
                     helpY,

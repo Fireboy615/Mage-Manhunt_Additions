@@ -8,11 +8,16 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
+import net.fireboy.mageadditions.network.SpellConfigPayloads;
+import net.neoforged.neoforge.network.PacketDistributor;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * First stage of Mage Additions' spell balancing UI.
@@ -39,6 +44,7 @@ public final class SpellManagerScreen extends Screen {
     private AbstractSpell selectedSpell;
     private int scrollOffset;
     private Button editButton;
+    private Set<ResourceLocation> modifiedSpellIds = Set.of();
     private boolean scrollBarDragging;
     private double scrollBarGrabOffset;
 
@@ -79,6 +85,20 @@ public final class SpellManagerScreen extends Screen {
         loadSpellRegistry();
         rebuildFilter();
         updateEditButton();
+        requestModifiedStatus();
+    }
+
+    private void requestModifiedStatus() {
+        if (this.minecraft != null && this.minecraft.getConnection() != null) {
+            PacketDistributor.sendToServer(new SpellConfigPayloads.StatusRequest());
+        }
+    }
+
+    /** Called by the client packet handler with the server-authoritative status list. */
+    public void applyModifiedStatus(List<ResourceLocation> spellIds) {
+        this.modifiedSpellIds = spellIds == null || spellIds.isEmpty()
+                ? Set.of()
+                : Set.copyOf(new HashSet<>(spellIds));
     }
 
     /**
@@ -210,6 +230,13 @@ public final class SpellManagerScreen extends Screen {
 
         graphics.fill(left - 1, top - 17, right + 1, bottom + 1, 0x66000000);
         graphics.drawString(this.font, Component.literal("Spells"), left + 5, top - 13, 0xFFFFFF);
+        graphics.drawString(
+                this.font,
+                Component.literal("* modified").withStyle(ChatFormatting.GOLD),
+                Math.max(left + 58, right - 62),
+                top - 13,
+                0xFFFFFF
+        );
 
         graphics.enableScissor(left, top, right, bottom);
 
@@ -240,13 +267,24 @@ public final class SpellManagerScreen extends Screen {
             );
 
             int textX = left + 28;
-            int availableWidth = Math.max(30, right - textX - 6);
+            boolean modified = this.modifiedSpellIds.contains(spell.getSpellResource());
+            int indicatorWidth = modified ? 12 : 0;
+            int availableWidth = Math.max(30, right - textX - 6 - indicatorWidth);
             String name = trimToWidth(displayName(spell), availableWidth);
             String id = trimToWidth(spell.getSpellId(), availableWidth);
 
             int nameColor = IronsSpellConfigAccess.read(spell).enabled() ? 0xFFFFFF : 0x777777;
             graphics.drawString(this.font, name, textX, y + 4, nameColor);
             graphics.drawString(this.font, id, textX, y + 16, 0x888888);
+            if (modified) {
+                graphics.drawString(
+                        this.font,
+                        Component.literal("*").withStyle(ChatFormatting.GOLD),
+                        right - 14,
+                        y + 4,
+                        0xFFFFFF
+                );
+            }
         }
 
         graphics.disableScissor();
