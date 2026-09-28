@@ -45,6 +45,10 @@ public abstract class AbstractSpellMixin {
             LivingEntity caster
     ) {
         int originalEffectiveTicks = spell.getEffectiveCastTime(spellLevel, caster);
+        if (spell.getCastType() == CastType.CONTINUOUS
+                && CastTimeOverrides.behavior(spell).castDurationOverride().enabled()) {
+            return CastTimeOverrides.resolveCastDurationTicks(spell, originalEffectiveTicks);
+        }
         return CastTimeOverrides.resolve(spell, originalEffectiveTicks);
     }
 

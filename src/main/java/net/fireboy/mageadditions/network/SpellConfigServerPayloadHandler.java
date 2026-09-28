@@ -116,6 +116,15 @@ public final class SpellConfigServerPayloadHandler {
                     payload.hasMinCastDistance() ? payload.minCastDistance() : null,
                     toRule(payload.rangeMode(), payload.rangeValue()),
                     toRule(payload.projectileSpeedMode(), payload.projectileSpeedValue()),
+                    toRule(payload.hitboxSizeMode(), payload.hitboxSizeValue()),
+                    toRule(payload.knockbackMode(), payload.knockbackValue()),
+                    toRule(payload.areaOfEffectMode(), payload.areaOfEffectValue()),
+                    toRule(payload.effectDurationMode(), payload.effectDurationValue()),
+                    payload.cloudMode(),
+                    toRule(payload.lingerDurationMode(), payload.lingerDurationValue()),
+                    payload.followCursor(),
+                    payload.bounceCount(),
+                    toRule(payload.castDurationMode(), payload.castDurationValue()),
                     payload.shieldInteraction(),
                     payload.targetingMode()
             ).normalized();
@@ -158,6 +167,12 @@ public final class SpellConfigServerPayloadHandler {
         Double minOverride = mage.behavior().minCastDistance();
         SpellOverrideConfigService.RuleState rangeRule = mage.behavior().range();
         SpellOverrideConfigService.RuleState projectileSpeedRule = mage.behavior().projectileSpeed();
+        SpellOverrideConfigService.RuleState hitboxSizeRule = mage.behavior().hitboxSize();
+        SpellOverrideConfigService.RuleState knockbackRule = mage.behavior().knockback();
+        SpellOverrideConfigService.RuleState areaOfEffectRule = mage.behavior().areaOfEffect();
+        SpellOverrideConfigService.RuleState effectDurationRule = mage.behavior().effectDuration();
+        SpellOverrideConfigService.RuleState lingerDurationRule = mage.behavior().lingerDuration();
+        SpellOverrideConfigService.RuleState castDurationRule = mage.behavior().castDuration();
         SpellCapabilities.Capabilities capabilities = SpellCapabilities.detect(spell);
 
         boolean permission = canEdit(player);
@@ -205,6 +220,30 @@ public final class SpellConfigServerPayloadHandler {
                 capabilities.projectileSpeed(),
                 modeName(projectileSpeedRule),
                 projectileSpeedRule.value(),
+                capabilities.hitboxSize(),
+                modeName(hitboxSizeRule),
+                hitboxSizeRule.value(),
+                capabilities.knockback(),
+                modeName(knockbackRule),
+                knockbackRule.value(),
+                capabilities.areaOfEffect(),
+                modeName(areaOfEffectRule),
+                areaOfEffectRule.value(),
+                capabilities.effectDuration(),
+                modeName(effectDurationRule),
+                effectDurationRule.value(),
+                capabilities.cloudOnImpact(),
+                mage.behavior().cloudMode(),
+                capabilities.lingerDuration(),
+                modeName(lingerDurationRule),
+                lingerDurationRule.value(),
+                capabilities.followCursor(),
+                mage.behavior().followCursor(),
+                capabilities.bounces(),
+                mage.behavior().bounceCount(),
+                capabilities.castDuration(),
+                modeName(castDurationRule),
+                castDurationRule.value(),
                 capabilities.shieldInteraction(),
                 mage.behavior().shieldInteraction(),
                 capabilities.targetingMode(),
@@ -247,6 +286,30 @@ public final class SpellConfigServerPayloadHandler {
                 false,
                 "off",
                 0.0,
+                false,
+                "off",
+                1.0,
+                false,
+                "off",
+                1.0,
+                false,
+                "off",
+                1.0,
+                false,
+                "off",
+                1.0,
+                false,
+                "native",
+                false,
+                "off",
+                1.0,
+                false,
+                false,
+                false,
+                0,
+                false,
+                "off",
+                1.0,
                 false,
                 "vanilla",
                 false,
@@ -339,6 +402,15 @@ public final class SpellConfigServerPayloadHandler {
         validateMovementMode(payload.movementMode());
         validateTargetingMode(payload.targetingMode());
         validateRule(payload.projectileSpeedMode(), payload.projectileSpeedValue(), "Projectile speed override");
+        validateRule(payload.hitboxSizeMode(), payload.hitboxSizeValue(), "Hitbox size override");
+        validateRule(payload.knockbackMode(), payload.knockbackValue(), "Knockback override");
+        validateRule(payload.areaOfEffectMode(), payload.areaOfEffectValue(), "Area of effect override");
+        validateRule(payload.effectDurationMode(), payload.effectDurationValue(), "Effect duration override");
+        validateRule(payload.lingerDurationMode(), payload.lingerDurationValue(), "Linger duration override");
+        validateRule(payload.castDurationMode(), payload.castDurationValue(), "Cast duration override");
+        if (payload.bounceCount() < 0 || payload.bounceCount() > 1000) {
+            throw new IllegalArgumentException("Bounce count must be between 0 and 1000.");
+        }
         validateShieldInteraction(payload.shieldInteraction());
         requireFiniteRange(payload.movementMultiplier(), 0.0, 10.0, "Movement multiplier");
         if (payload.maxHeightEnabled()) {

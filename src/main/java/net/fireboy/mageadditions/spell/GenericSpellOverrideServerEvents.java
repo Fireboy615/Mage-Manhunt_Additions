@@ -1,0 +1,521 @@
+package net.fireboy.mageadditions.spell;
+
+import io.redspace.ironsspellbooks.api.magic.MagicData;
+import io.redspace.ironsspellbooks.api.registry.SpellRegistry;
+import io.redspace.ironsspellbooks.api.spells.AbstractSpell;
+import net.fireboy.mageadditions.config.CastTimeOverrides;
+import net.fireboy.mageadditions.mixin.MobEffectInstanceAccessor;
+import net.minecraft.core.Direction;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
+import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
+import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
+import net.neoforged.neoforge.event.entity.ProjectileImpactEvent;
+import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
+import net.neoforged.neoforge.event.entity.living.LivingKnockBackEvent;
+import net.neoforged.neoforge.event.entity.living.MobEffectEvent;
+import net.neoforged.neoforge.event.tick.EntityTickEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
+/** Runtime support for generic capability-driven spell behaviour overrides. */
+public final class GenericSpellOverrideServerEvents {
+    private static final Map<UUID, String> SOURCE_SPELLS = new ConcurrentHashMap<>();
+    private static final Map<UUID, PendingKnockback> PENDING_KNOCKBACK = new ConcurrentHashMap<>();
+    private static final Map<UUID, Integer> REMAINING_BOUNCES = new ConcurrentHashMap<>();
+    private static final Set<UUID> LINGER_DURATION_APPLIED = ConcurrentHashMap.newKeySet();
+    private static final Map<UUID, NativeCloudSource> NATIVE_CLOUD_SOURCES = new ConcurrentHashMap<>();
+    private static final List<PendingCloudImpact> PENDING_CLOUDS = new ArrayList<>();
+    private static final Map<Class<?>, Field> CURSOR_FIELDS = new ConcurrentHashMap<>();
+    private static final Set<Class<?>> NO_CURSOR_FIELD = ConcurrentHashMap.newKeySet();
+
+    private GenericSpellOverrideServerEvents() {}
+
+    public static void onEntityJoinLevel(EntityJoinLevelEvent event) {
+        if (event.getLevel().isClientSide()) return;
+        Entity entity = event.getEntity();
+
+        // Native lingering areas are spawned as separate entities. Match them
+        // back to the short-lived impact/AoE entity that created them so OFF can
+        // genuinely suppress the cloud and linger-duration overrides can still
+        // identify the originating spell.
+        if (!event.loadedFromDisk() && shouldSuppressNativeCloud(entity)) {
+            event.setCanceled(true);
+            return;
+        }
+
+        AbstractSpell spell = matchPendingLingeringEntity(entity);
+        AbstractSpell nativeCloudSpell = !event.loadedFromDisk() ? matchNativeCloudSource(entity) : null;
+        if (spell == null) spell = nativeCloudSpell;
+        if (spell == null) spell = spellFromOwner(entity);
+        if (spell == null) return;
+
+        SOURCE_SPELLS.put(entity.getUUID(), spell.getSpellId());
+        SpellCapabilities.Capabilities capabilities = SpellCapabilities.detect(spell);
+        if (capabilities.areaOfEffect()) {
+            applyRadiusOverride(entity, spell);
+        }
+        if (capabilities.cloudOnImpact() && SpellCapabilities.findImpactAreaFactory(entity.getClass()) != null) {
+            NATIVE_CLOUD_SOURCES.put(entity.getUUID(), new NativeCloudSource(
+                    entity, spell.getSpellId(), ownerUuid(entity)
+            ));
+        }
+        if (entity instanceof Projectile && capabilities.bounces()) {
+            int count = CastTimeOverrides.behavior(spell).bounceCount();
+            if (count > 0) REMAINING_BOUNCES.put(entity.getUUID(), count);
+        }
+    }
+
+    public static void onEntityLeaveLevel(EntityLeaveLevelEvent event) {
+        UUID id = event.getEntity().getUUID();
+        SOURCE_SPELLS.remove(id);
+        PENDING_KNOCKBACK.remove(id);
+        REMAINING_BOUNCES.remove(id);
+        LINGER_DURATION_APPLIED.remove(id);
+        NATIVE_CLOUD_SOURCES.remove(id);
+    }
+
+    public static void onEntityTickPre(EntityTickEvent.Pre event) {
+        Entity entity = event.getEntity();
+        if (entity.level().isClientSide()) return;
+        AbstractSpell spell = spellFromTracked(entity);
+        if (spell == null) return;
+
+        SpellCapabilities.Capabilities capabilities = SpellCapabilities.detect(spell);
+        if (entity instanceof Projectile && capabilities.hitboxSize()) {
+            applyHitboxOverride(entity, spell);
+        }
+        if (capabilities.areaOfEffect()) {
+            applyRadiusOverride(entity, spell);
+        }
+        if (capabilities.lingerDuration()
+                && LINGER_DURATION_APPLIED.add(entity.getUUID())) {
+            applyLingerDurationOverride(entity, spell);
+        }
+    }
+
+    public static void onProjectileImpact(ProjectileImpactEvent event) {
+        Projectile projectile = event.getProjectile();
+        if (projectile.level().isClientSide()) return;
+        AbstractSpell spell = spellFromTracked(projectile);
+        if (spell == null) spell = spellFromOwner(projectile);
+        if (spell == null) return;
+
+        if (event.getRayTraceResult() instanceof BlockHitResult blockHit && tryBounce(projectile, spell, blockHit)) {
+            event.setCanceled(true);
+            return;
+        }
+
+        CastTimeOverrides.BehaviorSettings behavior = CastTimeOverrides.behavior(spell);
+        SpellCapabilities.Capabilities capabilities = SpellCapabilities.detect(spell);
+        if (event.getRayTraceResult() instanceof BlockHitResult
+                && capabilities.cloudOnImpact()
+                && behavior.cloudMode() != CastTimeOverrides.CloudMode.OFF
+                && (behavior.cloudMode() == CastTimeOverrides.CloudMode.ON || behavior.lingerDurationOverride().enabled())) {
+            queueCloudImpact(
+                    projectile, spell, event.getRayTraceResult().getLocation(),
+                    behavior.cloudMode() == CastTimeOverrides.CloudMode.ON
+            );
+        }
+    }
+
+    public static void onIncomingDamage(LivingIncomingDamageEvent event) {
+        if (event.getEntity().level().isClientSide()) return;
+        Entity direct = event.getSource().getDirectEntity();
+        AbstractSpell spell = spellFromDamageSource(direct, event.getSource().getEntity());
+        if (spell == null) return;
+
+        SpellCapabilities.Capabilities capabilities = SpellCapabilities.detect(spell);
+        if (capabilities.knockback()) {
+            var override = CastTimeOverrides.behavior(spell).knockbackOverride();
+            if (override.enabled()) {
+                PENDING_KNOCKBACK.put(event.getEntity().getUUID(), new PendingKnockback(spell.getSpellId(), event.getEntity().tickCount + 2));
+            }
+        }
+
+        // Cone-style projectiles perform their entity collision manually and do
+        // not necessarily emit ProjectileImpactEvent. Damage is therefore the
+        // second generic impact signal for cloud-on-impact.
+        CastTimeOverrides.BehaviorSettings behavior = CastTimeOverrides.behavior(spell);
+        if (direct != null
+                && capabilities.cloudOnImpact()
+                && behavior.cloudMode() != CastTimeOverrides.CloudMode.OFF
+                && (behavior.cloudMode() == CastTimeOverrides.CloudMode.ON || behavior.lingerDurationOverride().enabled())
+                && SpellCapabilities.findImpactAreaFactory(direct.getClass()) != null) {
+            queueCloudImpact(
+                    direct, spell, event.getEntity().position(),
+                    behavior.cloudMode() == CastTimeOverrides.CloudMode.ON
+            );
+        }
+    }
+
+    public static void onLivingKnockBack(LivingKnockBackEvent event) {
+        PendingKnockback pending = PENDING_KNOCKBACK.remove(event.getEntity().getUUID());
+        if (pending == null || pending.expiresAtTick() < event.getEntity().tickCount) return;
+        AbstractSpell spell = SpellRegistry.getSpell(pending.spellId());
+        if (spell == null || spell == SpellRegistry.none()) return;
+        event.setStrength((float) CastTimeOverrides.resolveKnockback(spell, event.getStrength()));
+    }
+
+    public static void onEffectAdded(MobEffectEvent.Added event) {
+        if (event.getEntity().level().isClientSide()) return;
+        AbstractSpell spell = spellFromSource(event.getEffectSource());
+        if (spell == null || !SpellCapabilities.detect(spell).effectDuration()) return;
+        int original = event.getEffectInstance().getDuration();
+        int resolved = CastTimeOverrides.resolveEffectDurationTicks(spell, original);
+        if (resolved != original) {
+            ((MobEffectInstanceAccessor) (Object) event.getEffectInstance()).mageadditions$setDuration(resolved);
+        }
+    }
+
+    public static void onServerTickPost(ServerTickEvent.Post event) {
+        MinecraftServer server = event.getServer();
+        updateFollowCursor(server);
+        processPendingClouds(server);
+    }
+
+    private static boolean tryBounce(Projectile projectile, AbstractSpell spell, BlockHitResult hit) {
+        if (!SpellCapabilities.detect(spell).bounces()) return false;
+        int remaining = REMAINING_BOUNCES.getOrDefault(
+                projectile.getUUID(),
+                CastTimeOverrides.behavior(spell).bounceCount()
+        );
+        if (remaining <= 0) return false;
+
+        Vec3 velocity = projectile.getDeltaMovement();
+        if (velocity.lengthSqr() < 1.0E-8) return false;
+        Direction direction = hit.getDirection();
+        Vec3 reflected = switch (direction.getAxis()) {
+            case X -> new Vec3(-velocity.x, velocity.y, velocity.z);
+            case Y -> new Vec3(velocity.x, -velocity.y, velocity.z);
+            case Z -> new Vec3(velocity.x, velocity.y, -velocity.z);
+        };
+
+        REMAINING_BOUNCES.put(projectile.getUUID(), remaining - 1);
+        Vec3 normal = new Vec3(direction.getStepX(), direction.getStepY(), direction.getStepZ());
+        projectile.setPos(hit.getLocation().add(normal.scale(0.06)));
+        projectile.setDeltaMovement(reflected);
+        projectile.hasImpulse = true;
+        return true;
+    }
+
+    private static void queueCloudImpact(Entity source, AbstractSpell spell, Vec3 position, boolean forceCloud) {
+        Method factory = SpellCapabilities.findImpactAreaFactory(source.getClass());
+        if (factory == null || !(source.level() instanceof ServerLevel level)) return;
+        UUID ownerId = ownerUuid(source);
+        int dueTick = level.getServer().getTickCount() + 1;
+
+        // Prevent the same damage/impact path from creating duplicate pending
+        // requests at effectively the same point in the same tick.
+        for (PendingCloudImpact pending : PENDING_CLOUDS) {
+            if (!pending.satisfied
+                    && pending.source == source
+                    && pending.dueTick == dueTick
+                    && pending.position.distanceToSqr(position) < 0.04) {
+                return;
+            }
+        }
+        PENDING_CLOUDS.add(new PendingCloudImpact(source, spell.getSpellId(), ownerId, position, dueTick, factory, forceCloud));
+    }
+
+    private static boolean shouldSuppressNativeCloud(Entity entity) {
+        if (!SpellCapabilities.hasDurationAccessors(entity.getClass())) return false;
+        NativeCloudSource source = findNativeCloudSource(entity, CastTimeOverrides.CloudMode.OFF);
+        if (source == null) return false;
+        NATIVE_CLOUD_SOURCES.remove(source.source().getUUID(), source);
+        return true;
+    }
+
+    private static AbstractSpell matchNativeCloudSource(Entity entity) {
+        if (!SpellCapabilities.hasDurationAccessors(entity.getClass())) return null;
+        NativeCloudSource source = findNativeCloudSource(entity, null);
+        if (source == null) return null;
+        AbstractSpell spell = SpellRegistry.getSpell(source.spellId());
+        if (spell == null || spell == SpellRegistry.none()) return null;
+        if (CastTimeOverrides.behavior(spell).cloudMode() == CastTimeOverrides.CloudMode.OFF) return null;
+        NATIVE_CLOUD_SOURCES.remove(source.source().getUUID(), source);
+        return spell;
+    }
+
+    private static NativeCloudSource findNativeCloudSource(Entity entity, CastTimeOverrides.CloudMode requiredMode) {
+        UUID owner = ownerUuid(entity);
+        NativeCloudSource best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (NativeCloudSource source : NATIVE_CLOUD_SOURCES.values()) {
+            Entity parent = source.source();
+            if (parent == entity || parent.isRemoved() || parent.level() != entity.level()) continue;
+            if (source.ownerId() != null && owner != null && !source.ownerId().equals(owner)) continue;
+            if (source.ownerId() != null && owner == null) continue;
+
+            AbstractSpell spell = SpellRegistry.getSpell(source.spellId());
+            if (spell == null || spell == SpellRegistry.none()) continue;
+            CastTimeOverrides.CloudMode mode = CastTimeOverrides.behavior(spell).cloudMode();
+            if (requiredMode != null && mode != requiredMode) continue;
+
+            double distance = parent.position().distanceToSqr(entity.position());
+            // Native impact clouds are created at, or immediately beside, their
+            // parent effect/projectile. Keep this tight to avoid attributing an
+            // unrelated summoned entity from the same caster.
+            if (distance <= 16.0 && distance < bestDistance) {
+                best = source;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    }
+
+    private static AbstractSpell matchPendingLingeringEntity(Entity entity) {
+        if (!SpellCapabilities.hasDurationAccessors(entity.getClass())) return null;
+        UUID owner = ownerUuid(entity);
+        PendingCloudImpact best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (PendingCloudImpact pending : PENDING_CLOUDS) {
+            if (pending.satisfied || pending.source.level() != entity.level()) continue;
+            if (pending.ownerId != null && owner != null && !pending.ownerId.equals(owner)) continue;
+            if (pending.ownerId != null && owner == null) continue;
+            double distance = pending.position.distanceToSqr(entity.position());
+            if (distance <= 64.0 && distance < bestDistance) {
+                best = pending;
+                bestDistance = distance;
+            }
+        }
+        if (best == null) return null;
+        best.satisfied = true;
+        AbstractSpell spell = SpellRegistry.getSpell(best.spellId);
+        return spell == null || spell == SpellRegistry.none() ? null : spell;
+    }
+
+    private static void processPendingClouds(MinecraftServer server) {
+        int now = server.getTickCount();
+        Iterator<PendingCloudImpact> iterator = PENDING_CLOUDS.iterator();
+        while (iterator.hasNext()) {
+            PendingCloudImpact pending = iterator.next();
+            if (pending.satisfied) {
+                iterator.remove();
+                continue;
+            }
+            if (pending.dueTick > now) continue;
+
+            AbstractSpell spell = SpellRegistry.getSpell(pending.spellId);
+            if (pending.forceCloud
+                    && spell != null && spell != SpellRegistry.none()
+                    && CastTimeOverrides.behavior(spell).cloudMode() == CastTimeOverrides.CloudMode.ON) {
+                try {
+                    if (pending.factory.getParameterCount() == 0) {
+                        pending.factory.invoke(pending.source);
+                    } else {
+                        pending.factory.invoke(pending.source, pending.position);
+                    }
+                } catch (ReflectiveOperationException | RuntimeException ignored) {
+                    // A structurally-compatible addon can still reject invocation
+                    // after its projectile is removed. In that case native impact
+                    // behaviour remains untouched rather than inventing a fallback.
+                }
+            }
+            iterator.remove();
+        }
+    }
+
+    private static void updateFollowCursor(MinecraftServer server) {
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            MagicData magic = MagicData.getPlayerMagicData(player);
+            AbstractSpell spell = SpellRegistry.getSpell(magic.getCastingSpellId());
+            if (spell == null || spell == SpellRegistry.none()) continue;
+            if (!SpellCapabilities.detect(spell).followCursor()) continue;
+            if (!CastTimeOverrides.behavior(spell).followCursor()) continue;
+
+            Object castData = magic.getAdditionalCastData();
+            if (castData == null) continue;
+            Field targetField = cursorField(castData.getClass());
+            if (targetField == null) continue;
+
+            double range = CastTimeOverrides.resolveTargetRange(spell, 40.0);
+            range = Math.max(1.0, Math.min(256.0, range));
+            Vec3 start = player.getEyePosition();
+            Vec3 end = start.add(player.getLookAngle().scale(range));
+            ServerLevel level = player.serverLevel();
+            HitResult aimed = level.clip(new ClipContext(start, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, player));
+            Vec3 target = aimed.getType() == HitResult.Type.MISS ? end : aimed.getLocation();
+
+            if (aimed.getType() == HitResult.Type.MISS) {
+                Vec3 downStart = target.add(0.0, 16.0, 0.0);
+                Vec3 downEnd = target.add(0.0, -64.0, 0.0);
+                HitResult ground = level.clip(new ClipContext(downStart, downEnd, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, player));
+                if (ground.getType() != HitResult.Type.MISS) target = ground.getLocation();
+            }
+
+            try {
+                targetField.set(castData, target);
+            } catch (IllegalAccessException ignored) {}
+        }
+    }
+
+    private static Field cursorField(Class<?> type) {
+        Field cached = CURSOR_FIELDS.get(type);
+        if (cached != null) return cached;
+        if (NO_CURSOR_FIELD.contains(type)) return null;
+
+        Field fallback = null;
+        Class<?> current = type;
+        while (current != null && current != Object.class) {
+            for (Field field : current.getDeclaredFields()) {
+                int mods = field.getModifiers();
+                if (Modifier.isStatic(mods) || Modifier.isFinal(mods) || !Vec3.class.isAssignableFrom(field.getType())) continue;
+                String name = field.getName().toLowerCase(Locale.ROOT);
+                try {
+                    field.setAccessible(true);
+                } catch (RuntimeException ignored) {}
+                if (name.contains("center") || name.contains("target") || name.contains("position") || name.contains("location")) {
+                    CURSOR_FIELDS.put(type, field);
+                    return field;
+                }
+                if (fallback == null) fallback = field;
+            }
+            current = current.getSuperclass();
+        }
+        if (fallback != null) {
+            CURSOR_FIELDS.put(type, fallback);
+            return fallback;
+        }
+        NO_CURSOR_FIELD.add(type);
+        return null;
+    }
+
+    private static void applyHitboxOverride(Entity entity, AbstractSpell spell) {
+        AABB box = entity.getBoundingBox();
+        double nativeSize = Math.max(box.getXsize(), box.getZsize());
+        if (nativeSize <= 1.0E-6) return;
+        double target = CastTimeOverrides.resolveHitboxSize(spell, nativeSize);
+        if (Math.abs(target - nativeSize) <= 1.0E-6) return;
+        double scale = target / nativeSize;
+        double halfX = box.getXsize() * scale * 0.5;
+        double halfZ = box.getZsize() * scale * 0.5;
+        double halfY = box.getYsize() * scale * 0.5;
+        double cx = (box.minX + box.maxX) * 0.5;
+        double cy = (box.minY + box.maxY) * 0.5;
+        double cz = (box.minZ + box.maxZ) * 0.5;
+        entity.setBoundingBox(new AABB(cx - halfX, cy - halfY, cz - halfZ, cx + halfX, cy + halfY, cz + halfZ));
+    }
+
+    private static void applyRadiusOverride(Entity entity, AbstractSpell spell) {
+        try {
+            Method getter = entity.getClass().getMethod("getRadius");
+            Method setter = entity.getClass().getMethod("setRadius", float.class);
+            Object value = getter.invoke(entity);
+            if (!(value instanceof Number number)) return;
+            double nativeRadius = number.doubleValue();
+            double resolved = CastTimeOverrides.resolveAreaOfEffect(spell, nativeRadius);
+            if (Math.abs(resolved - nativeRadius) > 1.0E-6) setter.invoke(entity, (float) resolved);
+        } catch (ReflectiveOperationException ignored) {
+            // Not an entity-backed radius. Capability detection stays conservative;
+            // spell-specific mixins can extend this path later without changing config format.
+        }
+    }
+
+    private static void applyLingerDurationOverride(Entity entity, AbstractSpell spell) {
+        try {
+            Method getter = entity.getClass().getMethod("getDuration");
+            Method setter = entity.getClass().getMethod("setDuration", int.class);
+            Object value = getter.invoke(entity);
+            if (!(value instanceof Number number)) return;
+            int nativeDuration = number.intValue();
+            int resolved = CastTimeOverrides.resolveLingerDurationTicks(spell, nativeDuration);
+            if (resolved != nativeDuration) setter.invoke(entity, resolved);
+        } catch (ReflectiveOperationException ignored) {
+            // Not an entity-backed lingering area.
+        }
+    }
+
+    private static AbstractSpell spellFromDamageSource(Entity direct, Entity owner) {
+        AbstractSpell spell = spellFromSource(direct);
+        return spell != null ? spell : spellFromSource(owner);
+    }
+
+    private static AbstractSpell spellFromSource(Entity source) {
+        if (source == null) return null;
+        AbstractSpell tracked = spellFromTracked(source);
+        if (tracked != null) return tracked;
+        if (source instanceof ServerPlayer player) return currentSpell(player);
+        return spellFromOwner(source);
+    }
+
+    private static AbstractSpell spellFromTracked(Entity entity) {
+        String id = SOURCE_SPELLS.get(entity.getUUID());
+        if (id == null) return null;
+        AbstractSpell spell = SpellRegistry.getSpell(id);
+        return spell == null || spell == SpellRegistry.none() ? null : spell;
+    }
+
+    private static AbstractSpell spellFromOwner(Entity entity) {
+        Entity owner = ownerEntity(entity);
+        return owner instanceof ServerPlayer player ? currentSpell(player) : null;
+    }
+
+    private static UUID ownerUuid(Entity entity) {
+        Entity owner = ownerEntity(entity);
+        return owner == null ? null : owner.getUUID();
+    }
+
+    private static Entity ownerEntity(Entity entity) {
+        if (entity instanceof Projectile projectile) return projectile.getOwner();
+        try {
+            Method getOwner = entity.getClass().getMethod("getOwner");
+            Object value = getOwner.invoke(entity);
+            return value instanceof Entity e ? e : null;
+        } catch (ReflectiveOperationException ignored) {
+            return null;
+        }
+    }
+
+    private static AbstractSpell currentSpell(ServerPlayer player) {
+        String id = MagicData.getPlayerMagicData(player).getCastingSpellId();
+        AbstractSpell spell = SpellRegistry.getSpell(id);
+        return spell == null || spell == SpellRegistry.none() ? null : spell;
+    }
+
+    private record PendingKnockback(String spellId, int expiresAtTick) {}
+
+    private record NativeCloudSource(Entity source, String spellId, UUID ownerId) {}
+
+    private static final class PendingCloudImpact {
+        private final Entity source;
+        private final String spellId;
+        private final UUID ownerId;
+        private final Vec3 position;
+        private final int dueTick;
+        private final Method factory;
+        private final boolean forceCloud;
+        private boolean satisfied;
+
+        private PendingCloudImpact(Entity source, String spellId, UUID ownerId, Vec3 position, int dueTick, Method factory, boolean forceCloud) {
+            this.source = source;
+            this.spellId = spellId;
+            this.ownerId = ownerId;
+            this.position = position;
+            this.dueTick = dueTick;
+            this.factory = factory;
+            this.forceCloud = forceCloud;
+        }
+    }
+}

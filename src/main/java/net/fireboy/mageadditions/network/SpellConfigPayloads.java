@@ -128,6 +128,21 @@ public final class SpellConfigPayloads {
             double minCastDistance,
             String projectileSpeedMode,
             double projectileSpeedValue,
+            String hitboxSizeMode,
+            double hitboxSizeValue,
+            String knockbackMode,
+            double knockbackValue,
+            String areaOfEffectMode,
+            double areaOfEffectValue,
+            String effectDurationMode,
+            double effectDurationValue,
+            String cloudMode,
+            String lingerDurationMode,
+            double lingerDurationValue,
+            boolean followCursor,
+            int bounceCount,
+            String castDurationMode,
+            double castDurationValue,
             String shieldInteraction,
             String targetingMode
     ) implements CustomPacketPayload {
@@ -164,6 +179,21 @@ public final class SpellConfigPayloads {
                         buffer.readUtf(32),
                         buffer.readDouble(),
                         buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readUtf(16),
+                        buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readBoolean(),
+                        buffer.readVarInt(),
+                        buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readUtf(32),
                         buffer.readUtf(32)
                 );
             }
@@ -194,6 +224,21 @@ public final class SpellConfigPayloads {
                 buffer.writeDouble(value.minCastDistance());
                 buffer.writeUtf(value.projectileSpeedMode(), 32);
                 buffer.writeDouble(value.projectileSpeedValue());
+                buffer.writeUtf(value.hitboxSizeMode(), 32);
+                buffer.writeDouble(value.hitboxSizeValue());
+                buffer.writeUtf(value.knockbackMode(), 32);
+                buffer.writeDouble(value.knockbackValue());
+                buffer.writeUtf(value.areaOfEffectMode(), 32);
+                buffer.writeDouble(value.areaOfEffectValue());
+                buffer.writeUtf(value.effectDurationMode(), 32);
+                buffer.writeDouble(value.effectDurationValue());
+                buffer.writeUtf(value.cloudMode(), 16);
+                buffer.writeUtf(value.lingerDurationMode(), 32);
+                buffer.writeDouble(value.lingerDurationValue());
+                buffer.writeBoolean(value.followCursor());
+                buffer.writeVarInt(value.bounceCount());
+                buffer.writeUtf(value.castDurationMode(), 32);
+                buffer.writeDouble(value.castDurationValue());
                 buffer.writeUtf(value.shieldInteraction(), 32);
                 buffer.writeUtf(value.targetingMode(), 32);
             }
@@ -238,6 +283,30 @@ public final class SpellConfigPayloads {
             boolean supportsProjectileSpeed,
             String projectileSpeedMode,
             double projectileSpeedValue,
+            boolean supportsHitboxSize,
+            String hitboxSizeMode,
+            double hitboxSizeValue,
+            boolean supportsKnockback,
+            String knockbackMode,
+            double knockbackValue,
+            boolean supportsAreaOfEffect,
+            String areaOfEffectMode,
+            double areaOfEffectValue,
+            boolean supportsEffectDuration,
+            String effectDurationMode,
+            double effectDurationValue,
+            boolean supportsCloudOnImpact,
+            String cloudMode,
+            boolean supportsLingerDuration,
+            String lingerDurationMode,
+            double lingerDurationValue,
+            boolean supportsFollowCursor,
+            boolean followCursor,
+            boolean supportsBounces,
+            int bounceCount,
+            boolean supportsCastDuration,
+            String castDurationMode,
+            double castDurationValue,
             boolean supportsShieldInteraction,
             String shieldInteraction,
             boolean supportsTargetingMode,
@@ -285,6 +354,30 @@ public final class SpellConfigPayloads {
                         buffer.readDouble(),
                         buffer.readBoolean(),
                         buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readBoolean(),
+                        buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readBoolean(),
+                        buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readBoolean(),
+                        buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readBoolean(),
+                        buffer.readUtf(16),
+                        buffer.readBoolean(),
+                        buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readBoolean(),
+                        buffer.readBoolean(),
+                        buffer.readBoolean(),
+                        buffer.readVarInt(),
+                        buffer.readBoolean(),
+                        buffer.readUtf(32),
+                        buffer.readDouble(),
+                        buffer.readBoolean(),
+                        buffer.readUtf(32),
                         buffer.readBoolean(),
                         buffer.readUtf(32)
                 );
@@ -324,6 +417,30 @@ public final class SpellConfigPayloads {
                 buffer.writeBoolean(value.supportsProjectileSpeed());
                 buffer.writeUtf(value.projectileSpeedMode(), 32);
                 buffer.writeDouble(value.projectileSpeedValue());
+                buffer.writeBoolean(value.supportsHitboxSize());
+                buffer.writeUtf(value.hitboxSizeMode(), 32);
+                buffer.writeDouble(value.hitboxSizeValue());
+                buffer.writeBoolean(value.supportsKnockback());
+                buffer.writeUtf(value.knockbackMode(), 32);
+                buffer.writeDouble(value.knockbackValue());
+                buffer.writeBoolean(value.supportsAreaOfEffect());
+                buffer.writeUtf(value.areaOfEffectMode(), 32);
+                buffer.writeDouble(value.areaOfEffectValue());
+                buffer.writeBoolean(value.supportsEffectDuration());
+                buffer.writeUtf(value.effectDurationMode(), 32);
+                buffer.writeDouble(value.effectDurationValue());
+                buffer.writeBoolean(value.supportsCloudOnImpact());
+                buffer.writeUtf(value.cloudMode(), 16);
+                buffer.writeBoolean(value.supportsLingerDuration());
+                buffer.writeUtf(value.lingerDurationMode(), 32);
+                buffer.writeDouble(value.lingerDurationValue());
+                buffer.writeBoolean(value.supportsFollowCursor());
+                buffer.writeBoolean(value.followCursor());
+                buffer.writeBoolean(value.supportsBounces());
+                buffer.writeVarInt(value.bounceCount());
+                buffer.writeBoolean(value.supportsCastDuration());
+                buffer.writeUtf(value.castDurationMode(), 32);
+                buffer.writeDouble(value.castDurationValue());
                 buffer.writeBoolean(value.supportsShieldInteraction());
                 buffer.writeUtf(value.shieldInteraction(), 32);
                 buffer.writeBoolean(value.supportsTargetingMode());

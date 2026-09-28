@@ -85,12 +85,29 @@ public final class SpellEditorScreen extends Screen {
     private Button minCastDistanceResetButton;
     private Button projectileSpeedModeButton;
     private Button projectileSpeedResetButton;
+    private Button hitboxSizeModeButton;
+    private Button hitboxSizeResetButton;
+    private Button knockbackModeButton;
+    private Button knockbackResetButton;
+    private Button areaOfEffectModeButton;
+    private Button areaOfEffectResetButton;
+    private Button effectDurationModeButton;
+    private Button effectDurationResetButton;
+    private Button cloudOnImpactButton;
+    private Button cloudOnImpactResetButton;
+    private Button lingerDurationModeButton;
+    private Button lingerDurationResetButton;
+    private Button followCursorButton;
+    private Button followCursorResetButton;
+    private Button bouncesToggleButton;
+    private Button bouncesResetButton;
+    private Button castDurationModeButton;
+    private Button castDurationResetButton;
     private Button shieldInteractionButton;
     private Button shieldInteractionResetButton;
     private Button targetingModeButton;
     private Button targetingModeResetButton;
     private Button saveButton;
-    private Button counterspellButton;
     private Button ironsTabButton;
     private Button mageTabButton;
 
@@ -127,6 +144,13 @@ public final class SpellEditorScreen extends Screen {
     private EditBox maxHeightAboveGroundBox;
     private EditBox minCastDistanceBox;
     private EditBox projectileSpeedValueBox;
+    private EditBox hitboxSizeValueBox;
+    private EditBox knockbackValueBox;
+    private EditBox areaOfEffectValueBox;
+    private EditBox effectDurationValueBox;
+    private EditBox lingerDurationValueBox;
+    private EditBox bouncesValueBox;
+    private EditBox castDurationValueBox;
     private LinkedNumericOverrideControl castControl;
     private LinkedNumericOverrideControl rangeControl;
 
@@ -141,6 +165,24 @@ public final class SpellEditorScreen extends Screen {
     private boolean minCastDistanceOverrideActive = false;
     private boolean supportsProjectileSpeed = false;
     private String projectileSpeedMode = "off";
+    private boolean supportsHitboxSize = false;
+    private String hitboxSizeMode = "off";
+    private boolean supportsKnockback = false;
+    private String knockbackMode = "off";
+    private boolean supportsAreaOfEffect = false;
+    private String areaOfEffectMode = "off";
+    private boolean supportsEffectDuration = false;
+    private String effectDurationMode = "off";
+    private boolean supportsCloudOnImpact = false;
+    private String cloudMode = "native";
+    private boolean supportsLingerDuration = false;
+    private String lingerDurationMode = "off";
+    private boolean supportsFollowCursor = false;
+    private boolean followCursor = false;
+    private boolean supportsBounces = false;
+    private boolean bouncesEnabled = false;
+    private boolean supportsCastDuration = false;
+    private String castDurationMode = "off";
     private boolean supportsShieldInteraction = false;
     private String shieldInteraction = "vanilla";
     private boolean supportsTargetingMode = false;
@@ -390,22 +432,72 @@ public final class SpellEditorScreen extends Screen {
                 .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
         y += this.rowGap;
 
+        this.hitboxSizeModeButton = addRenderableWidget(Button.builder(genericModeLabel(this.hitboxSizeMode), b -> { this.hitboxSizeMode = cycleGenericMode(this.hitboxSizeMode); refreshGenericOverrideButtons(); setEditingEnabled(this.canEdit); })
+                .bounds(mageFieldX, y, 96, FIELD_HEIGHT).build());
+        this.hitboxSizeValueBox = numericBox(mageFieldX + 100, y, "1", Math.max(44, mageControlWidth - 100));
+        this.hitboxSizeResetButton = addRenderableWidget(Button.builder(Component.literal("Reset"), b -> { this.hitboxSizeMode = "off"; this.hitboxSizeValueBox.setValue("1"); refreshGenericOverrideButtons(); setEditingEnabled(this.canEdit); })
+                .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
+        y += this.rowGap;
+
+        this.knockbackModeButton = addRenderableWidget(Button.builder(genericModeLabel(this.knockbackMode), b -> { this.knockbackMode = cycleGenericMode(this.knockbackMode); refreshGenericOverrideButtons(); setEditingEnabled(this.canEdit); })
+                .bounds(mageFieldX, y, 96, FIELD_HEIGHT).build());
+        this.knockbackValueBox = numericBox(mageFieldX + 100, y, "1", Math.max(44, mageControlWidth - 100));
+        this.knockbackResetButton = addRenderableWidget(Button.builder(Component.literal("Reset"), b -> { this.knockbackMode = "off"; this.knockbackValueBox.setValue("1"); refreshGenericOverrideButtons(); setEditingEnabled(this.canEdit); })
+                .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
+        y += this.rowGap;
+
+        this.areaOfEffectModeButton = addRenderableWidget(Button.builder(genericModeLabel(this.areaOfEffectMode), b -> { this.areaOfEffectMode = cycleAreaOfEffectMode(this.areaOfEffectMode); refreshGenericOverrideButtons(); setEditingEnabled(this.canEdit); })
+                .bounds(mageFieldX, y, 96, FIELD_HEIGHT).build());
+        this.areaOfEffectValueBox = numericBox(mageFieldX + 100, y, "1", Math.max(44, mageControlWidth - 100));
+        this.areaOfEffectResetButton = addRenderableWidget(Button.builder(Component.literal("Reset"), b -> { this.areaOfEffectMode = "off"; this.areaOfEffectValueBox.setValue("1"); refreshGenericOverrideButtons(); setEditingEnabled(this.canEdit); })
+                .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
+        y += this.rowGap;
+
+        this.effectDurationModeButton = addRenderableWidget(Button.builder(genericModeLabel(this.effectDurationMode), b -> { this.effectDurationMode = cycleGenericMode(this.effectDurationMode); refreshGenericOverrideButtons(); setEditingEnabled(this.canEdit); })
+                .bounds(mageFieldX, y, 96, FIELD_HEIGHT).build());
+        this.effectDurationValueBox = numericBox(mageFieldX + 100, y, "1", Math.max(44, mageControlWidth - 100));
+        this.effectDurationResetButton = addRenderableWidget(Button.builder(Component.literal("Reset"), b -> { this.effectDurationMode = "off"; this.effectDurationValueBox.setValue("1"); refreshGenericOverrideButtons(); setEditingEnabled(this.canEdit); })
+                .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
+        y += this.rowGap;
+
+        this.cloudOnImpactButton = addRenderableWidget(Button.builder(cloudModeLabel(), b -> cycleCloudMode())
+                .bounds(mageFieldX, y, mageControlWidth, FIELD_HEIGHT).build());
+        this.cloudOnImpactResetButton = addRenderableWidget(Button.builder(Component.literal("Reset"), b -> resetCloudMode())
+                .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
+        y += this.rowGap;
+
+        this.lingerDurationModeButton = addRenderableWidget(Button.builder(genericModeLabel(this.lingerDurationMode), b -> { this.lingerDurationMode = cycleGenericMode(this.lingerDurationMode); refreshGenericOverrideButtons(); setEditingEnabled(this.canEdit); })
+                .bounds(mageFieldX, y, 96, FIELD_HEIGHT).build());
+        this.lingerDurationValueBox = numericBox(mageFieldX + 100, y, "1", Math.max(44, mageControlWidth - 100));
+        this.lingerDurationResetButton = addRenderableWidget(Button.builder(Component.literal("Reset"), b -> { this.lingerDurationMode = "off"; this.lingerDurationValueBox.setValue("1"); refreshGenericOverrideButtons(); setEditingEnabled(this.canEdit); })
+                .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
+        y += this.rowGap;
+
+        this.followCursorButton = addRenderableWidget(Button.builder(toggleLabel("Follow", this.followCursor), b -> { this.followCursor = !this.followCursor; refreshGenericOverrideButtons(); setEditingEnabled(this.canEdit); })
+                .bounds(mageFieldX, y, mageControlWidth, FIELD_HEIGHT).build());
+        this.followCursorResetButton = addRenderableWidget(Button.builder(Component.literal("Reset"), b -> { this.followCursor = false; refreshGenericOverrideButtons(); setEditingEnabled(this.canEdit); })
+                .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
+        y += this.rowGap;
+
+        this.bouncesToggleButton = addRenderableWidget(Button.builder(toggleLabel("Bounces", this.bouncesEnabled), b -> { this.bouncesEnabled = !this.bouncesEnabled; if (this.bouncesEnabled && "0".equals(this.bouncesValueBox.getValue().trim())) this.bouncesValueBox.setValue("1"); refreshGenericOverrideButtons(); setEditingEnabled(this.canEdit); })
+                .bounds(mageFieldX, y, 96, FIELD_HEIGHT).build());
+        this.bouncesValueBox = numericBox(mageFieldX + 100, y, "1", Math.max(44, mageControlWidth - 100));
+        this.bouncesResetButton = addRenderableWidget(Button.builder(Component.literal("Reset"), b -> { this.bouncesEnabled = false; this.bouncesValueBox.setValue("1"); refreshGenericOverrideButtons(); setEditingEnabled(this.canEdit); })
+                .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
+        y += this.rowGap;
+
+        this.castDurationModeButton = addRenderableWidget(Button.builder(genericModeLabel(this.castDurationMode), b -> { this.castDurationMode = cycleGenericMode(this.castDurationMode); refreshGenericOverrideButtons(); setEditingEnabled(this.canEdit); })
+                .bounds(mageFieldX, y, 96, FIELD_HEIGHT).build());
+        this.castDurationValueBox = numericBox(mageFieldX + 100, y, "1", Math.max(44, mageControlWidth - 100));
+        this.castDurationResetButton = addRenderableWidget(Button.builder(Component.literal("Reset"), b -> { this.castDurationMode = "off"; this.castDurationValueBox.setValue("1"); refreshGenericOverrideButtons(); setEditingEnabled(this.canEdit); })
+                .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
+        y += this.rowGap;
+
         this.shieldInteractionButton = addRenderableWidget(Button.builder(shieldInteractionLabel(), b -> cycleShieldInteraction())
                 .bounds(mageFieldX, y, mageControlWidth, FIELD_HEIGHT).build());
         this.shieldInteractionResetButton = addRenderableWidget(Button.builder(Component.literal("Reset"), b -> resetShieldInteraction())
                 .bounds(mageResetX, y, SMALL_RESET_WIDTH, FIELD_HEIGHT).build());
         y += this.rowGap;
-
-        y += this.rowGap * 2;
-        if (this.spell.getSpellId().equals("irons_spellbooks:counterspell")) {
-            this.counterspellButton = addRenderableWidget(Button.builder(Component.literal("Counterspell Rework Settings..."), b -> {
-                if (this.minecraft != null) {
-                    this.minecraft.setScreen(new CounterspellEditorScreen(this));
-                }
-            }).bounds(this.rightColumnX, y, this.columnWidth, FIELD_HEIGHT).build());
-        } else {
-            this.counterspellButton = null;
-        }
 
         registerScrollable(this.mageOverridesButton, ScrollSection.MAGE);
         registerScrollable(this.castResetButton, ScrollSection.MAGE);
@@ -430,17 +522,38 @@ public final class SpellEditorScreen extends Screen {
         registerScrollable(this.projectileSpeedModeButton, ScrollSection.MAGE);
         registerScrollable(this.projectileSpeedValueBox, ScrollSection.MAGE);
         registerScrollable(this.projectileSpeedResetButton, ScrollSection.MAGE);
+        registerScrollable(this.hitboxSizeModeButton, ScrollSection.MAGE);
+        registerScrollable(this.hitboxSizeValueBox, ScrollSection.MAGE);
+        registerScrollable(this.hitboxSizeResetButton, ScrollSection.MAGE);
+        registerScrollable(this.knockbackModeButton, ScrollSection.MAGE);
+        registerScrollable(this.knockbackValueBox, ScrollSection.MAGE);
+        registerScrollable(this.knockbackResetButton, ScrollSection.MAGE);
+        registerScrollable(this.areaOfEffectModeButton, ScrollSection.MAGE);
+        registerScrollable(this.areaOfEffectValueBox, ScrollSection.MAGE);
+        registerScrollable(this.areaOfEffectResetButton, ScrollSection.MAGE);
+        registerScrollable(this.effectDurationModeButton, ScrollSection.MAGE);
+        registerScrollable(this.effectDurationValueBox, ScrollSection.MAGE);
+        registerScrollable(this.effectDurationResetButton, ScrollSection.MAGE);
+        registerScrollable(this.cloudOnImpactButton, ScrollSection.MAGE);
+        registerScrollable(this.cloudOnImpactResetButton, ScrollSection.MAGE);
+        registerScrollable(this.lingerDurationModeButton, ScrollSection.MAGE);
+        registerScrollable(this.lingerDurationValueBox, ScrollSection.MAGE);
+        registerScrollable(this.lingerDurationResetButton, ScrollSection.MAGE);
+        registerScrollable(this.followCursorButton, ScrollSection.MAGE);
+        registerScrollable(this.followCursorResetButton, ScrollSection.MAGE);
+        registerScrollable(this.bouncesToggleButton, ScrollSection.MAGE);
+        registerScrollable(this.bouncesValueBox, ScrollSection.MAGE);
+        registerScrollable(this.bouncesResetButton, ScrollSection.MAGE);
+        registerScrollable(this.castDurationModeButton, ScrollSection.MAGE);
+        registerScrollable(this.castDurationValueBox, ScrollSection.MAGE);
+        registerScrollable(this.castDurationResetButton, ScrollSection.MAGE);
         registerScrollable(this.shieldInteractionButton, ScrollSection.MAGE);
         registerScrollable(this.shieldInteractionResetButton, ScrollSection.MAGE);
-        registerScrollable(this.counterspellButton, ScrollSection.MAGE);
 
         int lastMageWidgetBottom = Math.max(
                 this.minCastDistanceResetButton.getY() + this.minCastDistanceResetButton.getHeight(),
                 this.shieldInteractionResetButton.getY() + this.shieldInteractionResetButton.getHeight()
         );
-        if (this.counterspellButton != null) {
-            lastMageWidgetBottom = Math.max(lastMageWidgetBottom, this.counterspellButton.getY() + this.counterspellButton.getHeight());
-        }
         // Leave enough room to scroll the optional warning/help text fully into view.
         this.mageContentBottomBase = lastMageWidgetBottom + this.rowGap * 2 + 34;
 
@@ -670,9 +783,33 @@ public final class SpellEditorScreen extends Screen {
         setVisible(this.projectileSpeedModeButton, showMage && this.supportsProjectileSpeed);
         setVisible(this.projectileSpeedValueBox, showMage && this.supportsProjectileSpeed);
         setVisible(this.projectileSpeedResetButton, showMage && this.supportsProjectileSpeed);
+        setVisible(this.hitboxSizeModeButton, showMage && this.supportsHitboxSize);
+        setVisible(this.hitboxSizeValueBox, showMage && this.supportsHitboxSize);
+        setVisible(this.hitboxSizeResetButton, showMage && this.supportsHitboxSize);
+        setVisible(this.knockbackModeButton, showMage && this.supportsKnockback);
+        setVisible(this.knockbackValueBox, showMage && this.supportsKnockback);
+        setVisible(this.knockbackResetButton, showMage && this.supportsKnockback);
+        setVisible(this.areaOfEffectModeButton, showMage && this.supportsAreaOfEffect);
+        setVisible(this.areaOfEffectValueBox, showMage && this.supportsAreaOfEffect);
+        setVisible(this.areaOfEffectResetButton, showMage && this.supportsAreaOfEffect);
+        setVisible(this.effectDurationModeButton, showMage && this.supportsEffectDuration);
+        setVisible(this.effectDurationValueBox, showMage && this.supportsEffectDuration);
+        setVisible(this.effectDurationResetButton, showMage && this.supportsEffectDuration);
+        setVisible(this.cloudOnImpactButton, showMage && this.supportsCloudOnImpact);
+        setVisible(this.cloudOnImpactResetButton, showMage && this.supportsCloudOnImpact);
+        setVisible(this.lingerDurationModeButton, showMage && this.supportsLingerDuration);
+        setVisible(this.lingerDurationValueBox, showMage && this.supportsLingerDuration);
+        setVisible(this.lingerDurationResetButton, showMage && this.supportsLingerDuration);
+        setVisible(this.followCursorButton, showMage && this.supportsFollowCursor);
+        setVisible(this.followCursorResetButton, showMage && this.supportsFollowCursor);
+        setVisible(this.bouncesToggleButton, showMage && this.supportsBounces);
+        setVisible(this.bouncesValueBox, showMage && this.supportsBounces);
+        setVisible(this.bouncesResetButton, showMage && this.supportsBounces);
+        setVisible(this.castDurationModeButton, showMage && this.supportsCastDuration);
+        setVisible(this.castDurationValueBox, showMage && this.supportsCastDuration);
+        setVisible(this.castDurationResetButton, showMage && this.supportsCastDuration);
         setVisible(this.shieldInteractionButton, showMage && this.supportsShieldInteraction);
         setVisible(this.shieldInteractionResetButton, showMage && this.supportsShieldInteraction);
-        setVisible(this.counterspellButton, showMage);
 
         if (this.ironsTabButton != null) {
             this.ironsTabButton.active = this.showMageSection;
@@ -753,9 +890,21 @@ public final class SpellEditorScreen extends Screen {
         if (this.projectileSpeedModeButton != null) this.projectileSpeedModeButton.active = mageEnabled && this.supportsProjectileSpeed;
         if (this.projectileSpeedValueBox != null) this.projectileSpeedValueBox.active = mageEnabled && this.supportsProjectileSpeed && !"off".equals(this.projectileSpeedMode);
         if (this.projectileSpeedResetButton != null) this.projectileSpeedResetButton.active = mageEnabled && this.supportsProjectileSpeed && !"off".equals(this.projectileSpeedMode);
+        setGenericActive(this.hitboxSizeModeButton, this.hitboxSizeValueBox, this.hitboxSizeResetButton, mageEnabled && this.supportsHitboxSize, this.hitboxSizeMode);
+        setGenericActive(this.knockbackModeButton, this.knockbackValueBox, this.knockbackResetButton, mageEnabled && this.supportsKnockback, this.knockbackMode);
+        setGenericActive(this.areaOfEffectModeButton, this.areaOfEffectValueBox, this.areaOfEffectResetButton, mageEnabled && this.supportsAreaOfEffect, this.areaOfEffectMode);
+        setGenericActive(this.effectDurationModeButton, this.effectDurationValueBox, this.effectDurationResetButton, mageEnabled && this.supportsEffectDuration, this.effectDurationMode);
+        if (this.cloudOnImpactButton != null) this.cloudOnImpactButton.active = mageEnabled && this.supportsCloudOnImpact;
+        if (this.cloudOnImpactResetButton != null) this.cloudOnImpactResetButton.active = mageEnabled && this.supportsCloudOnImpact && !"native".equals(this.cloudMode);
+        setGenericActive(this.lingerDurationModeButton, this.lingerDurationValueBox, this.lingerDurationResetButton, mageEnabled && this.supportsLingerDuration, this.lingerDurationMode);
+        if (this.followCursorButton != null) this.followCursorButton.active = mageEnabled && this.supportsFollowCursor;
+        if (this.followCursorResetButton != null) this.followCursorResetButton.active = mageEnabled && this.supportsFollowCursor && this.followCursor;
+        if (this.bouncesToggleButton != null) this.bouncesToggleButton.active = mageEnabled && this.supportsBounces;
+        if (this.bouncesValueBox != null) this.bouncesValueBox.active = mageEnabled && this.supportsBounces && this.bouncesEnabled;
+        if (this.bouncesResetButton != null) this.bouncesResetButton.active = mageEnabled && this.supportsBounces && this.bouncesEnabled;
+        setGenericActive(this.castDurationModeButton, this.castDurationValueBox, this.castDurationResetButton, mageEnabled && this.supportsCastDuration, this.castDurationMode);
         if (this.shieldInteractionButton != null) this.shieldInteractionButton.active = mageEnabled && this.supportsShieldInteraction;
         if (this.shieldInteractionResetButton != null) this.shieldInteractionResetButton.active = mageEnabled && this.supportsShieldInteraction && !"vanilla".equals(this.shieldInteraction);
-        if (this.counterspellButton != null) this.counterspellButton.active = enabled;
 
         this.saveButton.active = enabled;
         updateCastControlPresentation();
@@ -815,6 +964,30 @@ public final class SpellEditorScreen extends Screen {
         setEditingEnabled(this.canEdit);
     }
 
+    private Component cloudModeLabel() {
+        return switch (this.cloudMode) {
+            case "on" -> Component.literal("Cloud: ON").withStyle(ChatFormatting.GREEN);
+            case "off" -> Component.literal("Cloud: OFF").withStyle(ChatFormatting.RED);
+            default -> Component.literal("Cloud: Native");
+        };
+    }
+
+    private void cycleCloudMode() {
+        this.cloudMode = switch (this.cloudMode) {
+            case "native" -> "on";
+            case "on" -> "off";
+            default -> "native";
+        };
+        refreshGenericOverrideButtons();
+        setEditingEnabled(this.canEdit);
+    }
+
+    private void resetCloudMode() {
+        this.cloudMode = "native";
+        refreshGenericOverrideButtons();
+        setEditingEnabled(this.canEdit);
+    }
+
     private Component shieldInteractionLabel() {
         String label = switch (this.shieldInteraction) {
             case "can_disable" -> "Can disable shields";
@@ -840,8 +1013,45 @@ public final class SpellEditorScreen extends Screen {
         setEditingEnabled(this.canEdit);
     }
 
+    private static Component genericModeLabel(String mode) {
+        return Component.literal(switch (mode) {
+            case "absolute" -> "Absolute";
+            case "multiplier" -> "Multiplier";
+            case "disabled" -> "Disabled";
+            default -> "Vanilla";
+        });
+    }
+
+    private static String cycleGenericMode(String mode) {
+        return switch (mode) { case "off" -> "multiplier"; case "multiplier" -> "absolute"; default -> "off"; };
+    }
+
+    private static String cycleAreaOfEffectMode(String mode) {
+        return switch (mode) {
+            case "off" -> "multiplier";
+            case "multiplier" -> "absolute";
+            case "absolute" -> "disabled";
+            default -> "off";
+        };
+    }
+
+    private static void setGenericActive(Button modeButton, EditBox valueBox, Button resetButton, boolean enabled, String mode) {
+        if (modeButton != null) modeButton.active = enabled;
+        if (valueBox != null) valueBox.active = enabled && !"off".equals(mode) && !"disabled".equals(mode);
+        if (resetButton != null) resetButton.active = enabled && !"off".equals(mode);
+    }
+
     private void refreshGenericOverrideButtons() {
         if (this.projectileSpeedModeButton != null) this.projectileSpeedModeButton.setMessage(projectileSpeedModeLabel());
+        if (this.hitboxSizeModeButton != null) this.hitboxSizeModeButton.setMessage(genericModeLabel(this.hitboxSizeMode));
+        if (this.knockbackModeButton != null) this.knockbackModeButton.setMessage(genericModeLabel(this.knockbackMode));
+        if (this.areaOfEffectModeButton != null) this.areaOfEffectModeButton.setMessage(genericModeLabel(this.areaOfEffectMode));
+        if (this.effectDurationModeButton != null) this.effectDurationModeButton.setMessage(genericModeLabel(this.effectDurationMode));
+        if (this.cloudOnImpactButton != null) this.cloudOnImpactButton.setMessage(cloudModeLabel());
+        if (this.lingerDurationModeButton != null) this.lingerDurationModeButton.setMessage(genericModeLabel(this.lingerDurationMode));
+        if (this.followCursorButton != null) this.followCursorButton.setMessage(toggleLabel("Follow", this.followCursor));
+        if (this.bouncesToggleButton != null) this.bouncesToggleButton.setMessage(toggleLabel("Bounces", this.bouncesEnabled));
+        if (this.castDurationModeButton != null) this.castDurationModeButton.setMessage(genericModeLabel(this.castDurationMode));
         if (this.shieldInteractionButton != null) this.shieldInteractionButton.setMessage(shieldInteractionLabel());
         if (this.targetingModeButton != null) this.targetingModeButton.setMessage(targetingModeLabel());
     }
@@ -895,6 +1105,15 @@ public final class SpellEditorScreen extends Screen {
         setBehaviorBoxValue(this.minCastDistanceBox, format(this.originalMinCastDistance));
         this.projectileSpeedMode = "off";
         this.projectileSpeedValueBox.setValue("1");
+        this.hitboxSizeMode = "off"; this.hitboxSizeValueBox.setValue("1");
+        this.knockbackMode = "off"; this.knockbackValueBox.setValue("1");
+        this.areaOfEffectMode = "off"; this.areaOfEffectValueBox.setValue("1");
+        this.effectDurationMode = "off"; this.effectDurationValueBox.setValue("1");
+        this.cloudMode = "native";
+        this.lingerDurationMode = "off"; this.lingerDurationValueBox.setValue("1");
+        this.followCursor = false;
+        this.bouncesEnabled = false; this.bouncesValueBox.setValue("1");
+        this.castDurationMode = "off"; this.castDurationValueBox.setValue("1");
         this.shieldInteraction = "vanilla";
         this.targetingMode = "vanilla";
         refreshGenericOverrideButtons();
@@ -925,6 +1144,13 @@ public final class SpellEditorScreen extends Screen {
             double maxHeightAboveGround = parseDouble(this.maxHeightAboveGroundBox, "Maximum height above ground", 0.0, 1_000_000.0);
             double minCastDistance = parseDouble(this.minCastDistanceBox, "Minimum cast distance", 0.0, 1_000_000.0);
             double projectileSpeedValue = parseDouble(this.projectileSpeedValueBox, "Projectile speed", 0.0, 1_000_000.0);
+            double hitboxSizeValue = parseDouble(this.hitboxSizeValueBox, "Hitbox size", 0.0, 1_000_000.0);
+            double knockbackValue = parseDouble(this.knockbackValueBox, "Knockback", 0.0, 1_000_000.0);
+            double areaOfEffectValue = parseDouble(this.areaOfEffectValueBox, "Area of effect", 0.0, 1_000_000.0);
+            double effectDurationValue = parseDouble(this.effectDurationValueBox, "Effect duration", 0.0, 1_000_000.0);
+            double lingerDurationValue = parseDouble(this.lingerDurationValueBox, "Linger duration", 0.0, 1_000_000.0);
+            int bounceCount = parseInt(this.bouncesValueBox, "Bounce count", 0, 1000);
+            double castDurationValue = parseDouble(this.castDurationValueBox, "Cast duration", 0.0, 1_000_000.0);
 
             this.waitingForServerSnapshot = true;
             this.status = Component.literal("Saving to server...").withStyle(ChatFormatting.YELLOW);
@@ -955,6 +1181,16 @@ public final class SpellEditorScreen extends Screen {
                     minCastDistance,
                     this.supportsProjectileSpeed ? this.projectileSpeedMode : "off",
                     projectileSpeedValue,
+                    this.supportsHitboxSize ? this.hitboxSizeMode : "off", hitboxSizeValue,
+                    this.supportsKnockback ? this.knockbackMode : "off", knockbackValue,
+                    this.supportsAreaOfEffect ? ("disabled".equals(this.areaOfEffectMode) ? "absolute" : this.areaOfEffectMode) : "off",
+                    this.supportsAreaOfEffect && "disabled".equals(this.areaOfEffectMode) ? 0.0 : areaOfEffectValue,
+                    this.supportsEffectDuration ? this.effectDurationMode : "off", effectDurationValue,
+                    this.supportsCloudOnImpact ? this.cloudMode : "native",
+                    this.supportsLingerDuration ? this.lingerDurationMode : "off", lingerDurationValue,
+                    this.supportsFollowCursor && this.followCursor,
+                    this.supportsBounces && this.bouncesEnabled ? bounceCount : 0,
+                    this.supportsCastDuration ? this.castDurationMode : "off", castDurationValue,
                     this.supportsShieldInteraction ? this.shieldInteraction : "vanilla",
                     this.supportsTargetingMode ? this.targetingMode : "vanilla"
             ));
@@ -1017,6 +1253,26 @@ public final class SpellEditorScreen extends Screen {
         this.supportsProjectileSpeed = snapshot.supportsProjectileSpeed();
         this.projectileSpeedMode = snapshot.projectileSpeedMode();
         this.projectileSpeedValueBox.setValue(format(snapshot.projectileSpeedValue()));
+        this.supportsHitboxSize = snapshot.supportsHitboxSize();
+        this.hitboxSizeMode = snapshot.hitboxSizeMode(); this.hitboxSizeValueBox.setValue(format(snapshot.hitboxSizeValue()));
+        this.supportsKnockback = snapshot.supportsKnockback();
+        this.knockbackMode = snapshot.knockbackMode(); this.knockbackValueBox.setValue(format(snapshot.knockbackValue()));
+        this.supportsAreaOfEffect = snapshot.supportsAreaOfEffect();
+        this.areaOfEffectMode = "absolute".equals(snapshot.areaOfEffectMode()) && Math.abs(snapshot.areaOfEffectValue()) < 1.0E-9
+                ? "disabled" : snapshot.areaOfEffectMode();
+        this.areaOfEffectValueBox.setValue(format(snapshot.areaOfEffectValue()));
+        this.supportsEffectDuration = snapshot.supportsEffectDuration();
+        this.effectDurationMode = snapshot.effectDurationMode(); this.effectDurationValueBox.setValue(format(snapshot.effectDurationValue()));
+        this.supportsCloudOnImpact = snapshot.supportsCloudOnImpact();
+        this.cloudMode = snapshot.cloudMode();
+        this.supportsLingerDuration = snapshot.supportsLingerDuration();
+        this.lingerDurationMode = snapshot.lingerDurationMode(); this.lingerDurationValueBox.setValue(format(snapshot.lingerDurationValue()));
+        this.supportsFollowCursor = snapshot.supportsFollowCursor();
+        this.followCursor = snapshot.followCursor();
+        this.supportsBounces = snapshot.supportsBounces();
+        this.bouncesEnabled = snapshot.bounceCount() > 0; this.bouncesValueBox.setValue(Integer.toString(Math.max(1, snapshot.bounceCount())));
+        this.supportsCastDuration = snapshot.supportsCastDuration();
+        this.castDurationMode = snapshot.castDurationMode(); this.castDurationValueBox.setValue(format(snapshot.castDurationValue()));
         this.supportsShieldInteraction = snapshot.supportsShieldInteraction();
         this.shieldInteraction = snapshot.shieldInteraction();
         this.supportsTargetingMode = snapshot.supportsTargetingMode();
@@ -1086,10 +1342,6 @@ public final class SpellEditorScreen extends Screen {
     private void resetMinCastDistance() {
         this.minCastDistanceOverrideActive = false;
         setBehaviorBoxValue(this.minCastDistanceBox, format(this.originalMinCastDistance));
-        this.projectileSpeedMode = "off";
-        this.projectileSpeedValueBox.setValue("1");
-        this.shieldInteraction = "vanilla";
-        refreshGenericOverrideButtons();
         setEditingEnabled(this.canEdit);
     }
 
@@ -1243,6 +1495,21 @@ public final class SpellEditorScreen extends Screen {
         drawLabel(graphics, x, y, "Allow crafting");
     }
 
+    private void drawCapabilityLabel(GuiGraphics graphics, int x, int y, String label, boolean supported) {
+        if (supported) {
+            drawLabel(graphics, x, y, label);
+            return;
+        }
+
+        graphics.drawString(
+                this.font,
+                Component.literal(label).withStyle(ChatFormatting.DARK_GRAY),
+                x,
+                y,
+                0xFFFFFF
+        );
+    }
+
     private int currentMaxLevel() {
         if (this.maxLevelBox == null) {
             return this.originalMaxLevel;
@@ -1310,19 +1577,30 @@ public final class SpellEditorScreen extends Screen {
 
         graphics.drawString(this.font, Component.literal("GENERIC CAPABILITIES").withStyle(ChatFormatting.LIGHT_PURPLE), x, y, 0xFFFFFF);
         y += this.rowGap;
-        if (this.supportsProjectileSpeed) {
-            drawLabel(graphics, x, y, "Projectile speed");
-        }
+        drawCapabilityLabel(graphics, x, y, "Projectile speed", this.supportsProjectileSpeed);
         y += this.rowGap;
-        if (this.supportsShieldInteraction) {
-            drawLabel(graphics, x, y, "Shield interaction");
-        }
+        drawCapabilityLabel(graphics, x, y, "Hitbox size", this.supportsHitboxSize);
+        y += this.rowGap;
+        drawCapabilityLabel(graphics, x, y, "Knockback", this.supportsKnockback);
+        y += this.rowGap;
+        drawCapabilityLabel(graphics, x, y, "Area of effect", this.supportsAreaOfEffect);
+        y += this.rowGap;
+        drawCapabilityLabel(graphics, x, y, "Effect duration", this.supportsEffectDuration);
+        y += this.rowGap;
+        drawCapabilityLabel(graphics, x, y, "Cloud on impact", this.supportsCloudOnImpact);
+        y += this.rowGap;
+        drawCapabilityLabel(graphics, x, y, "Linger duration (seconds)", this.supportsLingerDuration);
+        y += this.rowGap;
+        drawCapabilityLabel(graphics, x, y, "Follow cursor", this.supportsFollowCursor);
+        y += this.rowGap;
+        drawCapabilityLabel(graphics, x, y, "Bounces", this.supportsBounces);
+        y += this.rowGap;
+        drawCapabilityLabel(graphics, x, y, "Cast duration (seconds)", this.supportsCastDuration);
+        y += this.rowGap;
+        drawCapabilityLabel(graphics, x, y, "Shield interaction", this.supportsShieldInteraction);
         y += this.rowGap;
 
         int helpY = y + this.rowGap;
-        if (this.counterspellButton != null) {
-            helpY += FIELD_HEIGHT + 8;
-        }
         int helpWidth = Math.max(160, this.columnWidth);
 
         if (!CastTimeOverrides.balanceTweaksEnabled()) {

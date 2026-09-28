@@ -46,6 +46,9 @@ public final class MinigameManager {
     /** Players temporarily promoted to OP by practice mode. Persisted so cancel can safely undo it after a restart. */
     private static final Set<UUID> PRACTICE_PROMOTED_OPS = new HashSet<>();
     private static final Map<UUID, FreezePoint> FREEZE_POINTS = new HashMap<>();
+    private static final Map<UUID, GameType> PRACTICE_DEATH_GAMEMODES = new HashMap<>();
+    private static final Map<UUID, Double> DAMAGE_DEALT = new HashMap<>();
+    private static final Map<UUID, Integer> KILLS = new HashMap<>();
     private static final String[] RECIPE_IDS = {
             "crafttweaker:scroll_forge_change",
             "crafttweaker:copper_book_change",
@@ -96,7 +99,9 @@ public final class MinigameManager {
             return;
         }
 
-        int validatedTeams = useTeams ? Math.max(2, Math.min(requestedTeamCount, game.teams().size())) : 0;
+        int validatedTeams = useTeams
+                ? Math.max(2, Math.min(Math.max(requestedTeamCount, server.getPlayerList().getPlayerCount()), game.teams().size()))
+                : 0;
         activeGame = gameId;
         teamsEnabled = useTeams;
         teamCount = validatedTeams;
@@ -112,6 +117,9 @@ public final class MinigameManager {
         DEAD_PARTICIPANTS.clear();
         PRACTICE_PROMOTED_OPS.clear();
         FREEZE_POINTS.clear();
+        PRACTICE_DEATH_GAMEMODES.clear();
+        DAMAGE_DEALT.clear();
+        KILLS.clear();
 
         setPvp(server, false);
         prepareScoreboardTeams(server, game);
@@ -168,6 +176,11 @@ public final class MinigameManager {
             return;
         }
 
+        if (isTeamTakenByOther(player.getUUID(), teamId)) {
+            player.sendSystemMessage(Component.literal("That colour/team is already taken by another player.").withStyle(ChatFormatting.RED));
+            return;
+        }
+
         TEAM_SELECTIONS.put(player.getUUID(), teamId);
         assignScoreboardTeam(player, game.team(teamId));
         MinecraftServer server = player.getServer();
@@ -186,6 +199,8 @@ public final class MinigameManager {
         boolean wasLobby = phase == Phase.LOBBY;
         unfreezeGameTicks(server);
         setPvp(server, false);
+        configurePracticeRules(server, false);
+        clearMatchScoreboard(server);
         if (!wasLobby) {
             restoreDefaultWorldBorder(server);
         }
@@ -225,6 +240,10 @@ public final class MinigameManager {
             return;
         }
 
+        if (game.practice()) {
+            activeSettings = fixedPracticeSettings(activeSettings);
+        }
+
         phase = Phase.RUNNING;
         MATCH_PARTICIPANTS.clear();
         MATCH_PARTICIPANTS.addAll(TEAM_SELECTIONS.keySet());
@@ -234,6 +253,8 @@ public final class MinigameManager {
         tickCounter = 0;
         persistenceTickCounter = 0;
         setPvp(server, true);
+        configurePracticeRules(server, game.practice());
+        initializeMatchScoreboard(server);
 
         ServerLevel level = server.overworld();
         WorldBorder border = level.getWorldBorder();
@@ -241,13 +262,19 @@ public final class MinigameManager {
         // Do not allow border damage during spawn placement. Players are moved first, then damage is enabled.
         border.setDamageSafeZone(0.0);
         border.setDamagePerBlock(0.0);
-        border.setSize(activeSettings.initialBorderSize());
-        if (activeSettings.durationSeconds() > 0 && activeSettings.initialBorderSize() != activeSettings.finalBorderSize()) {
-            border.lerpSizeBetween(
-                    activeSettings.initialBorderSize(),
-                    activeSettings.finalBorderSize(),
-                    activeSettings.durationSeconds() * 1000L
-            );
+        if (game.practice()) {
+            enforcePracticeBorder(server);
+            // Keep damage disabled until everybody has been placed safely below.
+            border.setDamagePerBlock(0.0);
+        } else {
+            border.setSize(radiusToDiameter(activeSettings.initialBorderSize()));
+            if (activeSettings.durationSeconds() > 0 && activeSettings.initialBorderSize() != activeSettings.finalBorderSize()) {
+                border.lerpSizeBetween(
+                        radiusToDiameter(activeSettings.initialBorderSize()),
+                        radiusToDiameter(activeSettings.finalBorderSize()),
+                        activeSettings.durationSeconds() * 1000L
+                );
+            }
         }
 
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -405,6 +432,9 @@ public final class MinigameManager {
             teamsEnabled = snapshot.teamsEnabled();
             teamCount = Math.max(0, Math.min(snapshot.teamCount(), game.teams().size()));
             activeSettings = snapshot.settings().validated();
+            if (game.practice()) {
+                activeSettings = fixedPracticeSettings(activeSettings);
+            }
             matchTicksRemaining = snapshot.matchTicksRemaining();
             TEAM_SELECTIONS.putAll(snapshot.teamSelections());
             MATCH_PARTICIPANTS.addAll(snapshot.participants());
@@ -414,9 +444,17 @@ public final class MinigameManager {
 
             prepareScoreboardTeams(server, game);
             restoreScoreboardAssignments(server, game);
+            configurePracticeRules(server, game.practice() && (phase == Phase.RUNNING || phase == Phase.PAUSED));
+            if (phase == Phase.RUNNING || phase == Phase.PAUSED) {
+                initializeMatchScoreboard(server);
+            }
 
             if (phase == Phase.RUNNING || phase == Phase.PAUSED) {
-                server.overworld().getWorldBorder().setSize(snapshot.currentBorderSize());
+                if (game.practice()) {
+                    enforcePracticeBorder(server);
+                } else {
+                    server.overworld().getWorldBorder().setSize(radiusToDiameter(snapshot.currentBorderSize()));
+                }
             }
 
             if (phase == Phase.RUNNING) {
@@ -440,6 +478,10 @@ public final class MinigameManager {
     }
 
     public static void onServerTick(MinecraftServer server) {
+        freezeDaylightAtNoon(server);
+        if ((phase == Phase.RUNNING || phase == Phase.PAUSED) && isPracticeActive()) {
+            enforcePracticeBorder(server);
+        }
         if (phase != Phase.RUNNING) {
             keepProtectedPlayersFed(server);
         }
@@ -472,11 +514,6 @@ public final class MinigameManager {
             persistenceTickCounter = 0;
             saveSession(server);
         }
-        if (tickCounter < 20) {
-            return;
-        }
-        tickCounter = 0;
-
         MinigameDefinition game = activeDefinition();
         if (game == null || game.practice() || activeSettings == null) {
             return;
@@ -548,11 +585,16 @@ public final class MinigameManager {
         setPvp(server, true);
 
         WorldBorder border = server.overworld().getWorldBorder();
-        double currentSize = border.getSize();
-        if (matchTicksRemaining > 0 && currentSize != activeSettings.finalBorderSize()) {
-            border.lerpSizeBetween(currentSize, activeSettings.finalBorderSize(), matchTicksRemaining * 50L);
-        } else if (matchTicksRemaining <= 0) {
-            border.setSize(activeSettings.finalBorderSize());
+        if (game.practice()) {
+            enforcePracticeBorder(server);
+        } else {
+            double currentSize = border.getSize();
+            double finalDiameter = radiusToDiameter(activeSettings.finalBorderSize());
+            if (matchTicksRemaining > 0 && currentSize != finalDiameter) {
+                border.lerpSizeBetween(currentSize, finalDiameter, matchTicksRemaining * 50L);
+            } else if (matchTicksRemaining <= 0) {
+                border.setSize(finalDiameter);
+            }
         }
 
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -643,6 +685,12 @@ public final class MinigameManager {
             return;
         }
 
+        if (isTeamTakenByOther(targetId, teamId)) {
+            operator.sendSystemMessage(Component.literal("That colour/team is already taken by another player.").withStyle(ChatFormatting.RED));
+            sendMatchControlState(operator);
+            return;
+        }
+
         TEAM_SELECTIONS.put(targetId, teamId);
         MinigameDefinition.TeamDefinition team = game.team(teamId);
         if (team != null) {
@@ -685,7 +733,6 @@ public final class MinigameManager {
             return;
         }
 
-        int activeTeamCount = Math.min(teamCount, game.teams().size());
         List<UUID> players = new ArrayList<>();
         if (phase == Phase.LOBBY) {
             for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -702,6 +749,13 @@ public final class MinigameManager {
             return;
         }
 
+        int activeTeamCount = Math.min(game.teams().size(), Math.max(teamCount, players.size()));
+        if (players.size() > activeTeamCount) {
+            operator.sendSystemMessage(Component.literal("There are more players than available unique team colours.").withStyle(ChatFormatting.RED));
+            return;
+        }
+        teamCount = activeTeamCount;
+
         // Fisher-Yates using Minecraft's own RNG avoids another dependency and
         // produces a random ordering before the balanced round-robin assignment.
         RandomSource random = RandomSource.create();
@@ -714,7 +768,7 @@ public final class MinigameManager {
 
         for (int i = 0; i < players.size(); i++) {
             UUID playerId = players.get(i);
-            MinigameDefinition.TeamDefinition team = game.teams().get(i % activeTeamCount);
+            MinigameDefinition.TeamDefinition team = game.teams().get(i);
             TEAM_SELECTIONS.put(playerId, team.id());
 
             ServerPlayer online = server.getPlayerList().getPlayer(playerId);
@@ -737,6 +791,10 @@ public final class MinigameManager {
         MinecraftServer server = player.getServer();
         if (server == null) {
             return;
+        }
+
+        if ((phase == Phase.RUNNING || phase == Phase.PAUSED) && isPracticeActive()) {
+            enforcePracticeBorder(server);
         }
 
         if (phase == Phase.RUNNING) {
@@ -809,11 +867,18 @@ public final class MinigameManager {
             grantPracticeOp(player);
             refillPlayer(player);
             MinecraftServer server = player.getServer();
+            if (server != null) {
+                enforcePracticeBorder(server);
+            }
+            GameType deathMode = PRACTICE_DEATH_GAMEMODES.remove(player.getUUID());
+            if (deathMode == null) deathMode = GameType.CREATIVE;
             if (phase == Phase.PAUSED) {
+                // Keep the actual death gamemode saved; spectator is only the temporary pause state.
+                PRACTICE_DEATH_GAMEMODES.put(player.getUUID(), deathMode);
                 player.setGameMode(GameType.SPECTATOR);
                 freezePlayer(player);
             } else {
-                player.setGameMode(GameType.CREATIVE);
+                player.setGameMode(deathMode);
                 if (server != null && !randomTeleport(player, server.overworld())) {
                     ensureInsideBorder(player, server.overworld());
                 }
@@ -862,6 +927,9 @@ public final class MinigameManager {
         DEAD_PARTICIPANTS.clear();
         PRACTICE_PROMOTED_OPS.clear();
         FREEZE_POINTS.clear();
+        PRACTICE_DEATH_GAMEMODES.clear();
+        DAMAGE_DEALT.clear();
+        KILLS.clear();
     }
 
     private static void pauseMatchInternal(MinecraftServer server, ServerPlayer trigger, boolean recoveredAfterRestart, boolean automaticHostPause) {
@@ -875,8 +943,12 @@ public final class MinigameManager {
         freezeGameTicks(server);
         setPvp(server, false);
 
+        MinigameDefinition pausedGame = activeDefinition();
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             freezePlayer(player);
+            if (pausedGame != null && pausedGame.practice() && MATCH_PARTICIPANTS.contains(player.getUUID())) {
+                PRACTICE_DEATH_GAMEMODES.putIfAbsent(player.getUUID(), player.gameMode.getGameModeForPlayer());
+            }
             player.setGameMode(GameType.SPECTATOR);
         }
         saveSession(server);
@@ -998,7 +1070,8 @@ public final class MinigameManager {
         if (game.practice()) {
             grantPracticeOp(player);
             ensureInsideBorder(player, player.getServer().overworld());
-            player.setGameMode(GameType.CREATIVE);
+            GameType resumeMode = PRACTICE_DEATH_GAMEMODES.remove(player.getUUID());
+            player.setGameMode(resumeMode == null ? GameType.CREATIVE : resumeMode);
             refillPlayer(player);
         } else {
             player.setGameMode(GameType.SURVIVAL);
@@ -1073,10 +1146,10 @@ public final class MinigameManager {
             WorldBorder border = server.overworld().getWorldBorder();
             double currentSize = border.getSize();
             double currentRadius = currentSize / 2.0;
-            double initialSize = activeSettings == null ? currentSize : activeSettings.initialBorderSize();
-            double finalSize = activeSettings == null ? currentSize : activeSettings.finalBorderSize();
-            double initialRadius = initialSize / 2.0;
-            double finalRadius = finalSize / 2.0;
+            double initialRadius = activeSettings == null ? currentRadius : activeSettings.initialBorderSize();
+            double finalRadius = activeSettings == null ? currentRadius : activeSettings.finalBorderSize();
+            double initialSize = radiusToDiameter(initialRadius);
+            double finalSize = radiusToDiameter(finalRadius);
             int secondsRemaining = Math.max(0, matchTicksRemaining / 20);
             List<?> playerTeams = buildMatchControlTeamEntries(server);
 
@@ -1260,7 +1333,7 @@ public final class MinigameManager {
                 teamCount,
                 activeSettings,
                 matchTicksRemaining,
-                server.overworld().getWorldBorder().getSize(),
+                server.overworld().getWorldBorder().getSize() / 2.0,
                 TEAM_SELECTIONS,
                 MATCH_PARTICIPANTS,
                 DEAD_PARTICIPANTS,
@@ -1442,9 +1515,9 @@ public final class MinigameManager {
 
     private static void configureScoreboardTeam(PlayerTeam scoreboardTeam, MinigameDefinition.TeamDefinition team) {
         scoreboardTeam.setDisplayName(team.displayName());
-        // Keep vanilla nameplates neutral for opponents; teammate identification is client-private.
-        scoreboardTeam.setColor(ChatFormatting.RESET);
-        scoreboardTeam.setAllowFriendlyFire(false);
+        scoreboardTeam.setColor(team.color());
+        // Same-team PvP is intentionally enabled for Mage Manhunt.
+        scoreboardTeam.setAllowFriendlyFire(true);
     }
 
     private static void removeFromAnyTeam(ServerPlayer player) {
@@ -1465,7 +1538,14 @@ public final class MinigameManager {
 
     private static boolean allOnlinePlayersSelected(MinecraftServer server) {
         List<ServerPlayer> players = server.getPlayerList().getPlayers();
-        return !players.isEmpty() && players.stream().allMatch(player -> TEAM_SELECTIONS.containsKey(player.getUUID()));
+        if (players.isEmpty() || players.stream().anyMatch(player -> !TEAM_SELECTIONS.containsKey(player.getUUID()))) return false;
+        if (!teamsEnabled) return true;
+        Set<ResourceLocation> unique = new HashSet<>();
+        for (ServerPlayer player : players) {
+            ResourceLocation team = TEAM_SELECTIONS.get(player.getUUID());
+            if (team == null || !unique.add(team)) return false;
+        }
+        return true;
     }
 
     private static MinigameDefinition activeDefinition() {
@@ -1475,6 +1555,126 @@ public final class MinigameManager {
     private static String scoreboardTeamName(ResourceLocation teamId) {
         String raw = "ma_" + teamId.getPath();
         return raw.length() <= 16 ? raw : raw.substring(0, 16);
+    }
+
+    private static boolean isTeamTakenByOther(UUID playerId, ResourceLocation teamId) {
+        for (Map.Entry<UUID, ResourceLocation> entry : TEAM_SELECTIONS.entrySet()) {
+            if (!entry.getKey().equals(playerId) && teamId.equals(entry.getValue())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static void onPracticePlayerDeath(ServerPlayer player) {
+        MinigameDefinition game = activeDefinition();
+        if (phase == Phase.RUNNING && game != null && game.practice()) {
+            PRACTICE_DEATH_GAMEMODES.put(player.getUUID(), player.gameMode.getGameModeForPlayer());
+        }
+    }
+
+    public static void recordDamage(ServerPlayer attacker, ServerPlayer victim, float amount) {
+        if (phase != Phase.RUNNING || attacker == null || victim == null || attacker == victim || amount <= 0.0F) return;
+        if (!MATCH_PARTICIPANTS.contains(attacker.getUUID()) || !MATCH_PARTICIPANTS.contains(victim.getUUID())) return;
+        double total = DAMAGE_DEALT.merge(attacker.getUUID(), (double) amount, Double::sum);
+        updateScore(attacker, "ma_damage", Math.max(0, (int) Math.round(total)));
+    }
+
+    public static void recordKill(ServerPlayer killer, ServerPlayer victim) {
+        if (phase != Phase.RUNNING || killer == null || victim == null || killer == victim) return;
+        if (!MATCH_PARTICIPANTS.contains(killer.getUUID()) || !MATCH_PARTICIPANTS.contains(victim.getUUID())) return;
+        int total = KILLS.merge(killer.getUUID(), 1, Integer::sum);
+        updateScore(killer, "ma_kills", total);
+    }
+
+    private static void initializeMatchScoreboard(MinecraftServer server) {
+        runServerCommand(server, "scoreboard objectives remove ma_kills");
+        runServerCommand(server, "scoreboard objectives remove ma_damage");
+        runServerCommand(server, "scoreboard objectives add ma_kills dummy Kills");
+        runServerCommand(server, "scoreboard objectives add ma_damage dummy Damage");
+        runServerCommand(server, "scoreboard objectives setdisplay sidebar ma_kills");
+        runServerCommand(server, "scoreboard objectives setdisplay list ma_damage");
+        runServerCommand(server, "scoreboard objectives setdisplay below_name ma_damage");
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            updateScore(player, "ma_kills", 0);
+            updateScore(player, "ma_damage", 0);
+        }
+    }
+
+    private static void updateScore(ServerPlayer player, String objective, int value) {
+        MinecraftServer server = player.getServer();
+        if (server != null) {
+            runServerCommand(server, "scoreboard players set " + player.getScoreboardName() + " " + objective + " " + value);
+        }
+    }
+
+    private static void clearMatchScoreboard(MinecraftServer server) {
+        runServerCommand(server, "scoreboard objectives setdisplay sidebar");
+        runServerCommand(server, "scoreboard objectives setdisplay list");
+        runServerCommand(server, "scoreboard objectives setdisplay below_name");
+        runServerCommand(server, "scoreboard objectives remove ma_kills");
+        runServerCommand(server, "scoreboard objectives remove ma_damage");
+    }
+
+    private static void configurePracticeRules(MinecraftServer server, boolean practice) {
+        runServerCommand(server, "gamerule keepInventory " + (practice ? "true" : "false"));
+        freezeDaylightAtNoon(server);
+    }
+
+    private static void freezeDaylightAtNoon(MinecraftServer server) {
+        ServerLevel level = server.overworld();
+        if (level.getDayTime() != 6000L) {
+            level.setDayTime(6000L);
+        }
+        if (server.getTickCount() % 200 == 0) {
+            runServerCommand(server, "gamerule doDaylightCycle false");
+        }
+    }
+
+    private static boolean isPracticeActive() {
+        MinigameDefinition game = activeDefinition();
+        return game != null && game.practice() && activeSettings != null;
+    }
+
+    /** Practice is intentionally a fixed arena. The start radius is authoritative. */
+    private static MinigameSettings fixedPracticeSettings(MinigameSettings settings) {
+        if (settings == null) {
+            return null;
+        }
+        double radius = settings.initialBorderSize();
+        return new MinigameSettings(
+                settings.durationSeconds(),
+                radius,
+                radius,
+                settings.randomTeleport(),
+                settings.kitPreset(),
+                settings.customEquipmentPreset()
+        ).validated();
+    }
+
+    /**
+     * Re-assert the Practice border from the authoritative settings rather than
+     * trusting transient WorldBorder/recovery state. This makes reconnect, pause,
+     * continue and respawn all observe the exact same arena boundary.
+     */
+    private static void enforcePracticeBorder(MinecraftServer server) {
+        if (server == null || !isPracticeActive()) {
+            return;
+        }
+        WorldBorder border = server.overworld().getWorldBorder();
+        double desiredDiameter = radiusToDiameter(activeSettings.initialBorderSize());
+        if (Math.abs(border.getCenterX()) > 1.0E-6D || Math.abs(border.getCenterZ()) > 1.0E-6D) {
+            border.setCenter(0.0, 0.0);
+        }
+        if (Math.abs(border.getSize() - desiredDiameter) > 1.0E-6D) {
+            border.setSize(desiredDiameter);
+        }
+        border.setDamageSafeZone(0.0);
+        border.setDamagePerBlock(0.1);
+    }
+
+    private static double radiusToDiameter(double radius) {
+        return radius * 2.0D;
     }
 
     private static void setPvp(MinecraftServer server, boolean enabled) {

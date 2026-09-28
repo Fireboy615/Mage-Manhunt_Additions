@@ -234,6 +234,15 @@ public final class SpellOverrideConfigService {
                 nullableDistance(behavior.min_cast_distance),
                 toState(behavior.range),
                 toState(behavior.projectile_speed),
+                toState(behavior.hitbox_size),
+                toState(behavior.knockback),
+                toState(behavior.area_of_effect),
+                toState(behavior.effect_duration),
+                behavior.cloud_on_impact == null ? "native" : (behavior.cloud_on_impact ? "on" : "off"),
+                toState(behavior.linger_duration),
+                Boolean.TRUE.equals(behavior.follow_cursor),
+                behavior.bounces == null ? 0 : behavior.bounces,
+                toState(behavior.cast_duration),
                 normalizeShieldInteraction(behavior.shield_interaction),
                 normalizeTargetingMode(behavior.targeting_mode)
         ).normalized();
@@ -265,6 +274,19 @@ public final class SpellOverrideConfigService {
         behavior.min_cast_distance = safe.minCastDistance();
         behavior.range = toConfigRule(safe.range());
         behavior.projectile_speed = toConfigRule(safe.projectileSpeed());
+        behavior.hitbox_size = toConfigRule(safe.hitboxSize());
+        behavior.knockback = toConfigRule(safe.knockback());
+        behavior.area_of_effect = toConfigRule(safe.areaOfEffect());
+        behavior.effect_duration = toConfigRule(safe.effectDuration());
+        behavior.cloud_on_impact = switch (safe.cloudMode()) {
+            case "on" -> Boolean.TRUE;
+            case "off" -> Boolean.FALSE;
+            default -> null;
+        };
+        behavior.linger_duration = toConfigRule(safe.lingerDuration());
+        behavior.follow_cursor = safe.followCursor() ? Boolean.TRUE : null;
+        behavior.bounces = safe.bounceCount() > 0 ? safe.bounceCount() : null;
+        behavior.cast_duration = toConfigRule(safe.castDuration());
         behavior.shield_interaction = safe.shieldInteraction();
         behavior.targeting_mode = safe.targetingMode();
         map.put(spellId, behavior);
@@ -286,6 +308,14 @@ public final class SpellOverrideConfigService {
         return switch (mode.trim().toLowerCase(java.util.Locale.ROOT)) {
             case "can_disable", "cannot_disable" -> mode.trim().toLowerCase(java.util.Locale.ROOT);
             default -> "vanilla";
+        };
+    }
+
+    private static String normalizeCloudMode(String mode) {
+        if (mode == null) return "native";
+        return switch (mode.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "on", "off" -> mode.trim().toLowerCase(java.util.Locale.ROOT);
+            default -> "native";
         };
     }
 
@@ -578,11 +608,20 @@ public final class SpellOverrideConfigService {
             Double minCastDistance,
             RuleState range,
             RuleState projectileSpeed,
+            RuleState hitboxSize,
+            RuleState knockback,
+            RuleState areaOfEffect,
+            RuleState effectDuration,
+            String cloudMode,
+            RuleState lingerDuration,
+            boolean followCursor,
+            int bounceCount,
+            RuleState castDuration,
             String shieldInteraction,
             String targetingMode
     ) {
         public static BehaviorState defaults() {
-            return new BehaviorState(false, "default", 0.5, null, null, null, RuleState.disabled(), RuleState.disabled(), "vanilla", "vanilla");
+            return new BehaviorState(false, "default", 0.5, null, null, null, RuleState.disabled(), RuleState.disabled(), RuleState.disabled(), RuleState.disabled(), RuleState.disabled(), RuleState.disabled(), "native", RuleState.disabled(), false, 0, RuleState.disabled(), "vanilla", "vanilla");
         }
 
         public BehaviorState normalized() {
@@ -600,6 +639,13 @@ public final class SpellOverrideConfigService {
             Double min = nullableDistance(minCastDistance);
             RuleState rangeRule = normalizeRuleState(range);
             RuleState projectileRule = normalizeRuleState(projectileSpeed);
+            RuleState hitboxRule = normalizeRuleState(hitboxSize);
+            RuleState knockbackRule = normalizeRuleState(knockback);
+            RuleState aoeRule = normalizeRuleState(areaOfEffect);
+            RuleState effectDurationRule = normalizeRuleState(effectDuration);
+            RuleState lingerDurationRule = normalizeRuleState(lingerDuration);
+            RuleState castDurationRule = normalizeRuleState(castDuration);
+            int bounces = Math.max(0, Math.min(1000, bounceCount));
 
             return new BehaviorState(
                     enabled,
@@ -610,6 +656,15 @@ public final class SpellOverrideConfigService {
                     min,
                     rangeRule,
                     projectileRule,
+                    hitboxRule,
+                    knockbackRule,
+                    aoeRule,
+                    effectDurationRule,
+                    normalizeCloudMode(cloudMode),
+                    lingerDurationRule,
+                    followCursor,
+                    bounces,
+                    castDurationRule,
                     normalizeShieldInteraction(shieldInteraction),
                     normalizeTargetingMode(targetingMode)
             );
@@ -624,6 +679,15 @@ public final class SpellOverrideConfigService {
                     && value.minCastDistance == null
                     && !value.range.enabled()
                     && !value.projectileSpeed.enabled()
+                    && !value.hitboxSize.enabled()
+                    && !value.knockback.enabled()
+                    && !value.areaOfEffect.enabled()
+                    && !value.effectDuration.enabled()
+                    && value.cloudMode.equals("native")
+                    && !value.lingerDuration.enabled()
+                    && !value.followCursor
+                    && value.bounceCount == 0
+                    && !value.castDuration.enabled()
                     && value.shieldInteraction.equals("vanilla")
                     && value.targetingMode.equals("vanilla");
         }

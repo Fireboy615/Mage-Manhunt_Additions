@@ -288,6 +288,54 @@ public final class CastTimeOverrides {
         return Math.max(0.0, Math.min(1_000_000.0, resolved));
     }
 
+    public static double resolveHitboxSize(AbstractSpell spell, double originalSize) {
+        return resolveBehaviorNumber(behavior(spell).hitboxSizeOverride(), originalSize, 0.0, 1_000_000.0, false);
+    }
+
+    public static double resolveKnockback(AbstractSpell spell, double originalStrength) {
+        return resolveBehaviorNumber(behavior(spell).knockbackOverride(), originalStrength, 0.0, 1_000_000.0, false);
+    }
+
+    public static double resolveAreaOfEffect(AbstractSpell spell, double originalRadius) {
+        return resolveBehaviorNumber(behavior(spell).areaOfEffectOverride(), originalRadius, 0.0, 1_000_000.0, false);
+    }
+
+    public static int resolveEffectDurationTicks(AbstractSpell spell, int originalTicks) {
+        return resolveDurationTicks(behavior(spell).effectDurationOverride(), originalTicks);
+    }
+
+    /** Applies the generic lifetime override to entity-backed lingering spell areas. */
+    public static int resolveLingerDurationTicks(AbstractSpell spell, int originalTicks) {
+        return resolveDurationTicks(behavior(spell).lingerDurationOverride(), originalTicks);
+    }
+
+    /** Applies the dedicated duration override for CONTINUOUS spells. */
+    public static int resolveCastDurationTicks(AbstractSpell spell, int originalTicks) {
+        NumericOverride override = behavior(spell).castDurationOverride();
+        if (!override.enabled() || originalTicks < 0) return originalTicks;
+        double resolved = override.mode() == NumericMode.MULTIPLIER
+                ? originalTicks * override.value()
+                : override.value() * 20.0;
+        int max = Math.max(1, snapshot.maxCastTimeTicks);
+        return clampRounded(resolved, max);
+    }
+
+    private static int resolveDurationTicks(NumericOverride override, int originalTicks) {
+        if (!override.enabled() || originalTicks < 0) return originalTicks;
+        double resolved = override.mode() == NumericMode.MULTIPLIER
+                ? originalTicks * override.value()
+                : override.value() * 20.0;
+        return clampRounded(resolved, 72_000 * 20);
+    }
+
+    private static double resolveBehaviorNumber(NumericOverride override, double original, double min, double max, boolean absoluteSeconds) {
+        if (!override.enabled() || !Double.isFinite(original)) return original;
+        double absolute = absoluteSeconds ? override.value() * 20.0 : override.value();
+        double resolved = override.mode() == NumericMode.MULTIPLIER ? original * override.value() : absolute;
+        if (!Double.isFinite(resolved)) return original;
+        return Math.max(min, Math.min(max, resolved));
+    }
+
     public static double resolveTargetRange(AbstractSpell spell, double originalRange) {
         if (spell == null || !Double.isFinite(originalRange) || originalRange < 0.0) {
             return Double.isFinite(originalRange) ? Math.max(0.0, originalRange) : 0.0;
@@ -534,6 +582,17 @@ public final class CastTimeOverrides {
             Boolean requireLineOfSight = migratedLineOfSight(raw);
             NumericOverride rangeOverride = compileBehaviorNumericOverride(raw.range);
             NumericOverride projectileSpeedOverride = compileBehaviorNumericOverride(raw.projectile_speed);
+            NumericOverride hitboxSizeOverride = compileBehaviorNumericOverride(raw.hitbox_size);
+            NumericOverride knockbackOverride = compileBehaviorNumericOverride(raw.knockback);
+            NumericOverride areaOfEffectOverride = compileBehaviorNumericOverride(raw.area_of_effect);
+            NumericOverride effectDurationOverride = compileBehaviorNumericOverride(raw.effect_duration);
+            CloudMode cloudMode = raw.cloud_on_impact == null
+                    ? CloudMode.NATIVE
+                    : (raw.cloud_on_impact ? CloudMode.ON : CloudMode.OFF);
+            NumericOverride lingerDurationOverride = compileBehaviorNumericOverride(raw.linger_duration);
+            boolean followCursor = Boolean.TRUE.equals(raw.follow_cursor);
+            int bounceCount = raw.bounces == null ? 0 : raw.bounces;
+            NumericOverride castDurationOverride = compileBehaviorNumericOverride(raw.cast_duration);
             ShieldInteraction shieldInteraction = ShieldInteraction.parse(raw.shield_interaction);
             TargetingMode targetingMode = TargetingMode.parse(raw.targeting_mode);
             if (movement == null
@@ -543,6 +602,13 @@ public final class CastTimeOverrides {
                     || !validOptionalDistance(raw.min_cast_distance)
                     || rangeOverride == null
                     || projectileSpeedOverride == null
+                    || hitboxSizeOverride == null
+                    || knockbackOverride == null
+                    || areaOfEffectOverride == null
+                    || effectDurationOverride == null
+                    || lingerDurationOverride == null
+                    || bounceCount < 0 || bounceCount > 1000
+                    || castDurationOverride == null
                     || shieldInteraction == null
                     || targetingMode == null) {
                 MageAdditions.LOGGER.warn("Ignoring invalid spell behaviour rule for '{}'", entry.getKey());
@@ -559,6 +625,15 @@ public final class CastTimeOverrides {
                     raw.min_cast_distance,
                     rangeOverride,
                     projectileSpeedOverride,
+                    hitboxSizeOverride,
+                    knockbackOverride,
+                    areaOfEffectOverride,
+                    effectDurationOverride,
+                    cloudMode,
+                    lingerDurationOverride,
+                    followCursor,
+                    bounceCount,
+                    castDurationOverride,
                     shieldInteraction,
                     targetingMode
             ));
@@ -1005,6 +1080,15 @@ public final class CastTimeOverrides {
                   //   "require_line_of_sight": true,      // true or false; omit to inherit
                   //   "min_cast_distance": 3.0,           // omit to inherit native minimum
                   //   "projectile_speed": { "enabled": true, "mode": "multiplier", "value": 1.5 },
+                  //   "hitbox_size": { "enabled": true, "mode": "multiplier", "value": 1.25 },
+                  //   "knockback": { "enabled": true, "mode": "multiplier", "value": 1.5 },
+                  //   "area_of_effect": { "enabled": true, "mode": "multiplier", "value": 1.25 },
+                  //   "effect_duration": { "enabled": true, "mode": "multiplier", "value": 1.5 },
+                  //   "cloud_on_impact": true,             // null/native = untouched; true = force/allow; false = suppress detected native cloud
+                  //   "linger_duration": { "enabled": true, "mode": "absolute", "value": 6.0 }, // seconds
+                  //   "follow_cursor": true,               // compatible continuous ground-target spells
+                  //   "bounces": 2,                        // block/wall bounces for compatible projectiles
+                  //   "cast_duration": { "enabled": true, "mode": "absolute", "value": 6.0 }, // continuous casts, seconds
                   //   "shield_interaction": "cannot_disable", // vanilla, can_disable, cannot_disable
                   //   "targeting_mode": "both"               // vanilla, self, others, both
                   // }
@@ -1105,6 +1189,24 @@ public final class CastTimeOverrides {
         }
     }
 
+    public enum CloudMode {
+        NATIVE, ON, OFF;
+
+        static CloudMode parse(String raw) {
+            if (raw == null) return NATIVE;
+            try { return valueOf(raw.trim().toUpperCase(Locale.ROOT)); }
+            catch (IllegalArgumentException ignored) { return null; }
+        }
+
+        public boolean overridden() {
+            return this != NATIVE;
+        }
+
+        public boolean enabled() {
+            return this == ON;
+        }
+    }
+
     public enum ShieldInteraction {
         VANILLA, CAN_DISABLE, CANNOT_DISABLE;
 
@@ -1158,6 +1260,15 @@ public final class CastTimeOverrides {
             Double minCastDistance,
             NumericOverride rangeOverride,
             NumericOverride projectileSpeedOverride,
+            NumericOverride hitboxSizeOverride,
+            NumericOverride knockbackOverride,
+            NumericOverride areaOfEffectOverride,
+            NumericOverride effectDurationOverride,
+            CloudMode cloudMode,
+            NumericOverride lingerDurationOverride,
+            boolean followCursor,
+            int bounceCount,
+            NumericOverride castDurationOverride,
             ShieldInteraction shieldInteraction,
             TargetingMode targetingMode
     ) {
@@ -1169,7 +1280,7 @@ public final class CastTimeOverrides {
         /** No Mage Additions behaviour when the per-spell master switch is off. */
         public static BehaviorSettings disabled() {
             return new BehaviorSettings(
-                    false, MovementMode.DEFAULT, 0.5, null, null, null, NumericOverride.disabled(), NumericOverride.disabled(), ShieldInteraction.VANILLA, TargetingMode.VANILLA
+                    false, MovementMode.DEFAULT, 0.5, null, null, null, NumericOverride.disabled(), NumericOverride.disabled(), NumericOverride.disabled(), NumericOverride.disabled(), NumericOverride.disabled(), NumericOverride.disabled(), CloudMode.NATIVE, NumericOverride.disabled(), false, 0, NumericOverride.disabled(), ShieldInteraction.VANILLA, TargetingMode.VANILLA
             );
         }
     }

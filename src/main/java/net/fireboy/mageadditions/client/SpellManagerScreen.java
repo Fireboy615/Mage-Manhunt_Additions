@@ -35,6 +35,9 @@ public final class SpellManagerScreen extends Screen {
     private static final int SEARCH_HEIGHT = 20;
     private static final int ROW_HEIGHT = 30;
     private static final int ICON_SIZE = 16;
+    private static final int INFO_SCROLLBAR_WIDTH = 5;
+    private static final int INFO_SCROLLBAR_MIN_THUMB_HEIGHT = 18;
+    private static final int INFO_SCROLL_WHEEL_PIXELS = 28;
 
     private final Screen parent;
 
@@ -47,6 +50,9 @@ public final class SpellManagerScreen extends Screen {
     private Set<ResourceLocation> modifiedSpellIds = Set.of();
     private boolean scrollBarDragging;
     private double scrollBarGrabOffset;
+    private int infoScroll;
+    private boolean infoScrollBarDragging;
+    private double infoScrollBarGrabOffset;
 
     public SpellManagerScreen(Screen parent) {
         super(Component.literal("Mage Additions - Spell Manager"));
@@ -131,6 +137,7 @@ public final class SpellManagerScreen extends Screen {
 
         this.filteredSpells = matches;
         this.scrollOffset = 0;
+        this.infoScroll = 0;
 
         if (this.selectedSpell == null || !this.filteredSpells.contains(this.selectedSpell)) {
             this.selectedSpell = this.filteredSpells.isEmpty() ? null : this.filteredSpells.getFirst();
@@ -154,7 +161,11 @@ public final class SpellManagerScreen extends Screen {
         String name = displayName(spell).toLowerCase(Locale.ROOT);
         String id = spell.getSpellId().toLowerCase(Locale.ROOT);
         String namespace = spell.getSpellResource().getNamespace().toLowerCase(Locale.ROOT);
-        String school = spell.getSchoolType().getDisplayName().getString().toLowerCase(Locale.ROOT);
+        // getSchoolType() can read Iron's NeoForge server ConfigValue. On a
+        // client that opens this screen before that spec has loaded, NeoForge
+        // deliberately throws. The bridge is load-aware and safely supplies
+        // the spell default until a live/server value is available.
+        String school = IronsSpellConfigAccess.read(spell).school().toString().toLowerCase(Locale.ROOT);
 
         return name.contains(query)
                 || id.contains(query)
@@ -360,15 +371,138 @@ public final class SpellManagerScreen extends Screen {
                 this.scrollBarDragging ? 0xFFE0E0E0 : 0xCCAAAAAA);
     }
 
+    private int infoLeft() {
+        return listRight() + 14;
+    }
+
+    private int infoRight() {
+        return this.width - OUTER_MARGIN;
+    }
+
+    private int infoTop() {
+        return listTop() - 17;
+    }
+
+    private int infoBottom() {
+        return listBottom();
+    }
+
+    private int infoViewportTop() {
+        return infoTop() + 1;
+    }
+
+    private int infoViewportBottom() {
+        return infoBottom() - 1;
+    }
+
+    private int infoContentWidth() {
+        return Math.max(40, infoRight() - (infoLeft() + 10) - 12);
+    }
+
+    private Component infoHelpText() {
+        return Component.literal(
+                "Use Edit Selected Spell to change Iron's native spell config plus Mage Additions spell overrides."
+        ).withStyle(ChatFormatting.GRAY);
+    }
+
+    private int infoContentHeight() {
+        if (this.selectedSpell == null) return 0;
+
+        int y = 10;
+        y += 34;
+        y += 12;
+        y += 13;
+        y += 13;
+        y += 20;
+        y += 13;
+        y += 13;
+        y += 13;
+        y += 13;
+        y += 13;
+        y += 13;
+        y += 13;
+        y += 24;
+
+        int helpLines = Math.max(1, this.font.split(infoHelpText(), infoContentWidth()).size());
+        y += helpLines * this.font.lineHeight;
+        return y + 10;
+    }
+
+    private int maxInfoScroll() {
+        int viewportHeight = Math.max(1, infoViewportBottom() - infoViewportTop());
+        return Math.max(0, infoContentHeight() - viewportHeight);
+    }
+
+    private void setInfoScroll(int value) {
+        this.infoScroll = Math.max(0, Math.min(value, maxInfoScroll()));
+    }
+
+    private int infoScrollTrackLeft() {
+        return infoRight() - INFO_SCROLLBAR_WIDTH - 2;
+    }
+
+    private int infoScrollTrackTop() {
+        return infoTop() + 2;
+    }
+
+    private int infoScrollTrackBottom() {
+        return infoBottom() - 2;
+    }
+
+    private int infoScrollThumbHeight() {
+        int trackHeight = Math.max(1, infoScrollTrackBottom() - infoScrollTrackTop());
+        int max = maxInfoScroll();
+        if (max <= 0) return trackHeight;
+
+        int viewportHeight = Math.max(1, infoViewportBottom() - infoViewportTop());
+        int contentHeight = Math.max(viewportHeight, infoContentHeight());
+        int height = (int) Math.round(trackHeight * (viewportHeight / (double) contentHeight));
+        return Math.max(INFO_SCROLLBAR_MIN_THUMB_HEIGHT, Math.min(trackHeight, height));
+    }
+
+    private int infoScrollThumbTop() {
+        int max = maxInfoScroll();
+        if (max <= 0) return infoScrollTrackTop();
+        int travel = Math.max(0, infoScrollTrackBottom() - infoScrollTrackTop() - infoScrollThumbHeight());
+        return infoScrollTrackTop() + (int) Math.round(travel * (this.infoScroll / (double) max));
+    }
+
+    private void setInfoScrollFromThumbTop(double thumbTop) {
+        int max = maxInfoScroll();
+        int travel = Math.max(0, infoScrollTrackBottom() - infoScrollTrackTop() - infoScrollThumbHeight());
+        if (max <= 0 || travel <= 0) {
+            this.infoScroll = 0;
+            return;
+        }
+        double fraction = (thumbTop - infoScrollTrackTop()) / travel;
+        fraction = Math.max(0.0, Math.min(1.0, fraction));
+        setInfoScroll((int) Math.round(fraction * max));
+    }
+
+    private void renderInfoScrollBar(GuiGraphics graphics) {
+        if (maxInfoScroll() <= 0) return;
+
+        int trackLeft = infoScrollTrackLeft();
+        int trackTop = infoScrollTrackTop();
+        int trackBottom = infoScrollTrackBottom();
+        int thumbTop = infoScrollThumbTop();
+        int thumbHeight = infoScrollThumbHeight();
+
+        graphics.fill(trackLeft, trackTop, infoRight() - 1, trackBottom, 0x66202020);
+        graphics.fill(trackLeft, thumbTop, infoRight() - 1, thumbTop + thumbHeight,
+                this.infoScrollBarDragging ? 0xFFE0E0E0 : 0xCCAAAAAA);
+    }
+
     private void renderSelectedSpell(GuiGraphics graphics) {
-        int left = listRight() + 14;
-        int right = this.width - OUTER_MARGIN;
-        int top = listTop() - 17;
-        int bottom = listBottom();
+        int left = infoLeft();
+        int right = infoRight();
+        int top = infoTop();
+        int bottom = infoBottom();
 
         graphics.fill(left, top, right, bottom, 0x66000000);
 
         if (this.selectedSpell == null) {
+            this.infoScroll = 0;
             graphics.drawCenteredString(
                     this.font,
                     Component.literal("Select a spell").withStyle(ChatFormatting.GRAY),
@@ -379,11 +513,15 @@ public final class SpellManagerScreen extends Screen {
             return;
         }
 
+        setInfoScroll(this.infoScroll);
+
         AbstractSpell spell = this.selectedSpell;
         IronsSpellConfigAccess.Settings config = IronsSpellConfigAccess.read(spell);
 
         int x = left + 10;
-        int y = top + 10;
+        int y = top + 10 - this.infoScroll;
+
+        graphics.enableScissor(left + 1, infoViewportTop(), right - 1, infoViewportBottom());
 
         graphics.blit(
                 spell.getSpellIconResource(),
@@ -405,7 +543,7 @@ public final class SpellManagerScreen extends Screen {
         y += 12;
         drawValue(graphics, x, y, "Mod namespace", spell.getSpellResource().getNamespace());
         y += 13;
-        drawValue(graphics, x, y, "School", spell.getSchoolType().getDisplayName().getString());
+        drawValue(graphics, x, y, "School", schoolDisplayName(config.school()));
         y += 13;
         drawValue(graphics, x, y, "Cast type", spell.getCastType().name().toLowerCase(Locale.ROOT));
         y += 20;
@@ -427,17 +565,17 @@ public final class SpellManagerScreen extends Screen {
         drawValue(graphics, x, y, "Craftable", config.allowCrafting() ? "Yes" : "No");
         y += 24;
 
-        int availableWidth = Math.max(40, right - x - 10);
         graphics.drawWordWrap(
                 this.font,
-                Component.literal(
-                        "Use Edit Selected Spell to change Iron's native spell config plus Mage Additions cast-time, mana and cooldown overrides."
-                ).withStyle(ChatFormatting.GRAY),
+                infoHelpText(),
                 x,
                 y,
-                availableWidth,
+                infoContentWidth(),
                 0xFFFFFF
         );
+
+        graphics.disableScissor();
+        renderInfoScrollBar(graphics);
     }
 
     private void drawValue(GuiGraphics graphics, int x, int y, String label, String value) {
@@ -456,6 +594,28 @@ public final class SpellManagerScreen extends Screen {
         return this.font.plainSubstrByWidth(text, Math.max(0, width - suffixWidth)) + suffix;
     }
 
+    private static String schoolDisplayName(ResourceLocation schoolId) {
+        if (schoolId == null) {
+            return "Unknown";
+        }
+        String path = schoolId.getPath().replace('_', ' ');
+        StringBuilder result = new StringBuilder(path.length());
+        boolean capitalize = true;
+        for (int i = 0; i < path.length(); i++) {
+            char c = path.charAt(i);
+            if (capitalize && Character.isLetter(c)) {
+                result.append(Character.toUpperCase(c));
+                capitalize = false;
+            } else {
+                result.append(c);
+            }
+            if (c == ' ') {
+                capitalize = true;
+            }
+        }
+        return result.toString();
+    }
+
     private static String formatDecimal(double value) {
         if (Math.abs(value - Math.rint(value)) < 0.0001) {
             return Integer.toString((int) Math.rint(value));
@@ -465,6 +625,25 @@ public final class SpellManagerScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (button == 0
+                && mouseX >= infoScrollTrackLeft() - 1
+                && mouseX < infoRight()
+                && mouseY >= infoScrollTrackTop()
+                && mouseY < infoScrollTrackBottom()
+                && maxInfoScroll() > 0) {
+
+            int thumbTop = infoScrollThumbTop();
+            int thumbHeight = infoScrollThumbHeight();
+            if (mouseY >= thumbTop && mouseY < thumbTop + thumbHeight) {
+                this.infoScrollBarGrabOffset = mouseY - thumbTop;
+            } else {
+                this.infoScrollBarGrabOffset = thumbHeight / 2.0;
+                setInfoScrollFromThumbTop(mouseY - this.infoScrollBarGrabOffset);
+            }
+            this.infoScrollBarDragging = true;
+            return true;
+        }
+
         if (button == 0
                 && mouseX >= scrollTrackLeft() - 1
                 && mouseX < listRight()
@@ -494,6 +673,7 @@ public final class SpellManagerScreen extends Screen {
             int index = this.scrollOffset + row;
             if (index >= 0 && index < this.filteredSpells.size()) {
                 this.selectedSpell = this.filteredSpells.get(index);
+                this.infoScroll = 0;
                 updateEditButton();
                 return true;
             }
@@ -505,6 +685,10 @@ public final class SpellManagerScreen extends Screen {
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (button == 0 && this.infoScrollBarDragging) {
+            setInfoScrollFromThumbTop(mouseY - this.infoScrollBarGrabOffset);
+            return true;
+        }
         if (button == 0 && this.scrollBarDragging) {
             setScrollFromThumbTop(mouseY - this.scrollBarGrabOffset);
             return true;
@@ -514,6 +698,10 @@ public final class SpellManagerScreen extends Screen {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0 && this.infoScrollBarDragging) {
+            this.infoScrollBarDragging = false;
+            return true;
+        }
         if (button == 0 && this.scrollBarDragging) {
             this.scrollBarDragging = false;
             return true;
@@ -534,6 +722,19 @@ public final class SpellManagerScreen extends Screen {
                 this.scrollOffset++;
             }
             clampScroll();
+            return true;
+        }
+
+        if (mouseX >= infoLeft()
+                && mouseX < infoRight()
+                && mouseY >= infoViewportTop()
+                && mouseY < infoViewportBottom()
+                && maxInfoScroll() > 0
+                && scrollY != 0.0) {
+
+            int delta = (int) Math.round(scrollY * INFO_SCROLL_WHEEL_PIXELS);
+            if (delta == 0) delta = scrollY > 0.0 ? 1 : -1;
+            setInfoScroll(this.infoScroll - delta);
             return true;
         }
 

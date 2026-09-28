@@ -24,11 +24,11 @@
   "minigame.mageadditions.blitz_15": "BLTZ — 15 Minute Blitz",
   "minigame.mageadditions.blitz_15.description": "Fast Mage Manhunt rules: random starts, full starter kit, and a rapidly closing border.",
   "minigame.mageadditions.standard_30": "Standard — 30 Minutes",
-  "minigame.mageadditions.standard_30.description": "Thirty-minute ruleset using a 2000 → 33 border radius.",
+  "minigame.mageadditions.standard_30.description": "Thirty-minute ruleset using a 1000 → 16.5 border radius.",
   "minigame.mageadditions.standard_60": "Standard — 60 Minutes",
-  "minigame.mageadditions.standard_60.description": "Long-form ruleset using a 4000 → 33 border radius.",
+  "minigame.mageadditions.standard_60.description": "Long-form ruleset using a 2000 → 16.5 border radius.",
   "minigame.mageadditions.practice_arena": "Practice Arena",
-  "minigame.mageadditions.practice_arena.description": "Creative practice mode with the arena kit and a fixed 151-block border radius.",
+  "minigame.mageadditions.practice_arena.description": "Creative practice mode with the arena kit and a fixed 75.5-block border radius (151-block diameter).",
   "team.mageadditions.red": "Red",
   "team.mageadditions.blue": "Blue",
   "team.mageadditions.green": "Green",
@@ -120,5 +120,6 @@
   "screen.mageadditions.minigame_setup.preset.blitz": "BLTZ 15",
   "screen.mageadditions.minigame_setup.preset.standard_30": "Standard 30",
   "screen.mageadditions.minigame_setup.preset.standard_60": "Standard 60",
-  "screen.mageadditions.minigame_setup.preset.practice": "Practice"
+  "screen.mageadditions.minigame_setup.preset.practice": "Practice",
+  "key.mageadditions.open_spell_config": "Open Spell Configuration"
 }

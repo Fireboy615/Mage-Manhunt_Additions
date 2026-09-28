@@ -9,170 +9,52 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 
 /**
- * Mage Additions' config landing page.
+ * Mage Additions' configuration landing page.
  *
- * The module switches stay here, while spell-by-spell configuration lives in
- * {@link SpellManagerScreen}. This keeps the main config screen simple even as
- * the spell editor grows.
+ * The landing page is only navigation. Each module opens its own page where the
+ * module's master enable/disable switch is always the first control at the top.
  */
 public final class MageAdditionsConfigScreen extends Screen {
-    private static final int BUTTON_WIDTH = 260;
-    private static final int BUTTON_HEIGHT = 20;
+    private static final int BUTTON_HEIGHT = 22;
+    private static final int BUTTON_WIDTH = 300;
 
     private final Screen parent;
-
-    private boolean balanceTweaks;
-    private boolean spellReworks;
-    private boolean customSpells;
-    private boolean experimental;
-
-    private Button balanceButton;
-    private Button reworksButton;
-    private Button customSpellsButton;
-    private Button experimentalButton;
-    private Button saveButton;
-
-    private Component statusMessage = Component.empty();
-    private boolean readOnlyRemoteServer;
 
     public MageAdditionsConfigScreen(Screen parent) {
         super(Component.literal("Mage Additions Configuration"));
         this.parent = parent;
-
-        CastTimeOverrides.ModuleStates states = CastTimeOverrides.moduleStates();
-        this.balanceTweaks = states.balanceTweaks();
-        this.spellReworks = states.spellReworks();
-        this.customSpells = states.customSpells();
-        this.experimental = states.experimental();
     }
 
     @Override
     protected void init() {
-        // Gameplay settings are server-authoritative. A remote client can browse
-        // the Spell Manager but cannot save server settings from this first UI.
-        this.readOnlyRemoteServer = this.minecraft != null
-                && this.minecraft.getConnection() != null
-                && !this.minecraft.hasSingleplayerServer();
+        int width = contentWidth();
+        int left = this.width / 2 - width / 2;
+        int y = 58;
 
-        int left = this.width / 2 - BUTTON_WIDTH / 2;
-        int y = 54;
-
-        this.addRenderableWidget(
-                Button.builder(Component.literal("Open Spell Manager"), button -> {
-                    if (this.minecraft != null) {
-                        this.minecraft.setScreen(new SpellManagerScreen(this));
-                    }
-                }).bounds(left, y, BUTTON_WIDTH, BUTTON_HEIGHT).build()
-        );
-
-        y += 34;
-        this.balanceButton = this.addRenderableWidget(
-                Button.builder(moduleLabel("Balance Tweaks", this.balanceTweaks), button -> {
-                    this.balanceTweaks = !this.balanceTweaks;
-                    button.setMessage(moduleLabel("Balance Tweaks", this.balanceTweaks));
-                }).bounds(left, y, BUTTON_WIDTH, BUTTON_HEIGHT).build()
-        );
-
-        y += 28;
-        this.reworksButton = this.addRenderableWidget(
-                Button.builder(moduleLabel("Spell Reworks", this.spellReworks), button -> {
-                    this.spellReworks = !this.spellReworks;
-                    button.setMessage(moduleLabel("Spell Reworks", this.spellReworks));
-                }).bounds(left, y, BUTTON_WIDTH, BUTTON_HEIGHT).build()
-        );
-
-        y += 28;
-        this.customSpellsButton = this.addRenderableWidget(
-                Button.builder(moduleLabel("Custom Spells", this.customSpells), button -> {
-                    this.customSpells = !this.customSpells;
-                    button.setMessage(moduleLabel("Custom Spells", this.customSpells));
-                }).bounds(left, y, BUTTON_WIDTH, BUTTON_HEIGHT).build()
-        );
-
-        y += 28;
-        this.experimentalButton = this.addRenderableWidget(
-                Button.builder(moduleLabel("Experimental", this.experimental), button -> {
-                    this.experimental = !this.experimental;
-                    button.setMessage(moduleLabel("Experimental", this.experimental));
-                }).bounds(left, y, BUTTON_WIDTH, BUTTON_HEIGHT).build()
-        );
-
-        y += 36;
-        int halfWidth = (BUTTON_WIDTH - 6) / 2;
-        this.saveButton = this.addRenderableWidget(
-                Button.builder(Component.literal("Save & Close"), button -> saveAndClose())
-                        .bounds(left, y, halfWidth, BUTTON_HEIGHT)
-                        .build()
-        );
-
-        this.addRenderableWidget(
-                Button.builder(Component.literal("Cancel"), button -> this.onClose())
-                        .bounds(left + halfWidth + 6, y, halfWidth, BUTTON_HEIGHT)
-                        .build()
-        );
-
-        y += 26;
-        this.addRenderableWidget(
-                Button.builder(Component.literal("Reset module defaults"), button -> resetDefaults())
-                        .bounds(left, y, BUTTON_WIDTH, BUTTON_HEIGHT)
-                        .build()
-        );
-
-        setEditingEnabled(!this.readOnlyRemoteServer);
-    }
-
-    private void setEditingEnabled(boolean enabled) {
-        this.balanceButton.active = enabled;
-        this.reworksButton.active = enabled;
-        this.customSpellsButton.active = enabled;
-        this.experimentalButton.active = enabled;
-        this.saveButton.active = enabled;
-    }
-
-    private void resetDefaults() {
-        CastTimeOverrides.ModuleStates defaults = CastTimeOverrides.ModuleStates.defaults();
-        this.balanceTweaks = defaults.balanceTweaks();
-        this.spellReworks = defaults.spellReworks();
-        this.customSpells = defaults.customSpells();
-        this.experimental = defaults.experimental();
-
-        this.balanceButton.setMessage(moduleLabel("Balance Tweaks", this.balanceTweaks));
-        this.reworksButton.setMessage(moduleLabel("Spell Reworks", this.spellReworks));
-        this.customSpellsButton.setMessage(moduleLabel("Custom Spells", this.customSpells));
-        this.experimentalButton.setMessage(moduleLabel("Experimental", this.experimental));
-        this.statusMessage = Component.literal("Defaults selected - press Save & Close to apply.")
-                .withStyle(ChatFormatting.YELLOW);
-    }
-
-    private void saveAndClose() {
-        CastTimeOverrides.ReloadResult result = CastTimeOverrides.saveModuleStates(
-                new CastTimeOverrides.ModuleStates(
-                        this.balanceTweaks,
-                        this.spellReworks,
-                        this.customSpells,
-                        this.experimental
-                )
-        );
-
-        if (!result.success()) {
-            String error = result.error() == null ? "Unknown error" : result.error();
-            this.statusMessage = Component.literal("Could not save: " + error)
-                    .withStyle(ChatFormatting.RED);
-            return;
+        for (ModuleTab tab : ModuleTab.values()) {
+            this.addRenderableWidget(
+                    Button.builder(Component.literal(tab.displayName), button -> openModule(tab))
+                            .bounds(left, y, width, BUTTON_HEIGHT)
+                            .build()
+            );
+            y += 30;
         }
 
-        this.statusMessage = Component.literal("Saved.").withStyle(ChatFormatting.GREEN);
+        this.addRenderableWidget(
+                Button.builder(Component.literal("Done"), button -> onClose())
+                        .bounds(left, Math.min(y + 12, this.height - 34), width, BUTTON_HEIGHT)
+                        .build()
+        );
+    }
+
+    private void openModule(ModuleTab tab) {
         if (this.minecraft != null) {
-            this.minecraft.setScreen(this.parent);
+            this.minecraft.setScreen(new ModuleConfigScreen(this, tab));
         }
     }
 
-    private static Component moduleLabel(String name, boolean enabled) {
-        MutableComponent label = Component.literal(name + ": ");
-        return label.append(
-                Component.literal(enabled ? "ON" : "OFF")
-                        .withStyle(enabled ? ChatFormatting.GREEN : ChatFormatting.RED)
-        );
+    private int contentWidth() {
+        return Math.min(BUTTON_WIDTH, Math.max(220, this.width - 40));
     }
 
     @Override
@@ -183,32 +65,11 @@ public final class MageAdditionsConfigScreen extends Screen {
         graphics.drawCenteredString(this.font, this.title, this.width / 2, 20, 0xFFFFFF);
         graphics.drawCenteredString(
                 this.font,
-                Component.literal("Modules and spell balancing"),
+                Component.literal("Choose a module to configure"),
                 this.width / 2,
                 36,
                 0xA0A0A0
         );
-
-        if (this.readOnlyRemoteServer) {
-            graphics.drawCenteredString(
-                    this.font,
-                    Component.literal("Remote server: browsing is available, editing is read-only for now.")
-                            .withStyle(ChatFormatting.RED),
-                    this.width / 2,
-                    this.height - 28,
-                    0xFFFFFF
-            );
-        } else if (!this.statusMessage.getString().isEmpty()) {
-            graphics.drawCenteredString(this.font, this.statusMessage, this.width / 2, this.height - 28, 0xFFFFFF);
-        } else {
-            graphics.drawCenteredString(
-                    this.font,
-                    Component.literal("Spell Manager currently provides automatic discovery + search; editing comes next."),
-                    this.width / 2,
-                    this.height - 28,
-                    0x808080
-            );
-        }
     }
 
     @Override
@@ -216,5 +77,252 @@ public final class MageAdditionsConfigScreen extends Screen {
         if (this.minecraft != null) {
             this.minecraft.setScreen(this.parent);
         }
+    }
+
+    /** A module-specific page with its master toggle pinned at the top. */
+    private static final class ModuleConfigScreen extends Screen {
+        private static final int CONTENT_WIDTH = 300;
+        private static final int CONTROL_HEIGHT = 22;
+
+        private final Screen parent;
+        private final ModuleTab tab;
+
+        private boolean enabled;
+        private boolean readOnlyRemoteServer;
+        private Button enabledButton;
+        private Component status = Component.empty();
+
+        private ModuleConfigScreen(Screen parent, ModuleTab tab) {
+            super(Component.literal(tab.displayName));
+            this.parent = parent;
+            this.tab = tab;
+            this.enabled = tab.enabled(CastTimeOverrides.moduleStates());
+        }
+
+        @Override
+        protected void init() {
+            this.readOnlyRemoteServer = this.minecraft != null
+                    && this.minecraft.getConnection() != null
+                    && !this.minecraft.hasSingleplayerServer();
+
+            // Refresh from the authoritative local snapshot each time this page
+            // is reopened, including after returning from one of its editors.
+            this.enabled = this.tab.enabled(CastTimeOverrides.moduleStates());
+
+            int width = Math.min(CONTENT_WIDTH, Math.max(220, this.width - 40));
+            int left = this.width / 2 - width / 2;
+            int y = 58;
+
+            // Master module switch: intentionally always the first control.
+            this.enabledButton = this.addRenderableWidget(
+                    Button.builder(moduleLabel(this.tab.displayName, this.enabled), button -> toggleModule())
+                            .bounds(left, y, width, 26)
+                            .build()
+            );
+            this.enabledButton.active = !this.readOnlyRemoteServer;
+
+            y += 42;
+            switch (this.tab) {
+                case BALANCE_TWEAKS -> this.addRenderableWidget(
+                        Button.builder(Component.literal("Open Spell Manager"), button -> {
+                            if (this.minecraft != null) {
+                                this.minecraft.setScreen(new SpellManagerScreen(this));
+                            }
+                        }).bounds(left, y, width, CONTROL_HEIGHT).build()
+                );
+                case SPELL_REWORKS -> this.addRenderableWidget(
+                        Button.builder(Component.literal("Open Counterspell Rework"), button -> {
+                            if (this.minecraft != null) {
+                                this.minecraft.setScreen(new CounterspellEditorScreen(this));
+                            }
+                        }).bounds(left, y, width, CONTROL_HEIGHT).build()
+                );
+                case CUSTOM_SPELLS, EXPERIMENTAL -> {
+                    // These pages intentionally exist now even before they gain
+                    // extra controls, keeping the config structure consistent.
+                }
+            }
+
+            this.addRenderableWidget(
+                    Button.builder(Component.literal("Back"), button -> onClose())
+                            .bounds(left, this.height - 34, width, CONTROL_HEIGHT)
+                            .build()
+            );
+        }
+
+        private void toggleModule() {
+            boolean previous = this.enabled;
+            this.enabled = !this.enabled;
+
+            CastTimeOverrides.ModuleStates current = CastTimeOverrides.moduleStates();
+            CastTimeOverrides.ModuleStates updated = this.tab.withEnabled(current, this.enabled);
+            CastTimeOverrides.ReloadResult result = CastTimeOverrides.saveModuleStates(updated);
+
+            if (!result.success()) {
+                this.enabled = previous;
+                String error = result.error() == null ? "Unknown error" : result.error();
+                this.status = Component.literal("Could not save: " + error)
+                        .withStyle(ChatFormatting.RED);
+            } else {
+                this.status = Component.literal(this.enabled ? "Enabled." : "Disabled.")
+                        .withStyle(this.enabled ? ChatFormatting.GREEN : ChatFormatting.YELLOW);
+            }
+
+            if (this.enabledButton != null) {
+                this.enabledButton.setMessage(moduleLabel(this.tab.displayName, this.enabled));
+            }
+        }
+
+        @Override
+        public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+            this.renderBackground(graphics, mouseX, mouseY, partialTick);
+            super.render(graphics, mouseX, mouseY, partialTick);
+
+            graphics.drawCenteredString(this.font, this.title, this.width / 2, 20, 0xFFFFFF);
+            graphics.drawCenteredString(
+                    this.font,
+                    Component.literal("Module settings"),
+                    this.width / 2,
+                    36,
+                    0xA0A0A0
+            );
+
+            Component description = switch (this.tab) {
+                case BALANCE_TWEAKS -> Component.literal(
+                        "Per-spell cast time, mana, cooldown, targeting and generic behaviour overrides."
+                );
+                case SPELL_REWORKS -> Component.literal(
+                        "Dedicated replacements and larger behaviour changes for existing Iron's Spells spells."
+                );
+                case CUSTOM_SPELLS -> Component.literal(
+                        "Master switch for Mage Additions custom spells. More custom-spell controls can be added here."
+                );
+                case EXPERIMENTAL -> Component.literal(
+                        "Opt-in testing features that are kept separate from normal balance and rework settings."
+                );
+            };
+
+            if (this.height >= 220) {
+                graphics.drawWordWrap(
+                        this.font,
+                        description.copy().withStyle(ChatFormatting.GRAY),
+                        Math.max(12, this.width / 2 - 150),
+                        136,
+                        Math.min(300, this.width - 24),
+                        0xFFFFFF
+                );
+            }
+
+            if (this.readOnlyRemoteServer) {
+                graphics.drawCenteredString(
+                        this.font,
+                        Component.literal("Remote server: this module switch is read-only here.")
+                                .withStyle(ChatFormatting.RED),
+                        this.width / 2,
+                        this.height - 50,
+                        0xFFFFFF
+                );
+            } else if (!this.status.getString().isEmpty()) {
+                graphics.drawCenteredString(
+                        this.font,
+                        this.status,
+                        this.width / 2,
+                        this.height - 50,
+                        0xFFFFFF
+                );
+            }
+        }
+
+        @Override
+        public void onClose() {
+            if (this.minecraft != null) {
+                this.minecraft.setScreen(this.parent);
+            }
+        }
+    }
+
+    private static Component moduleLabel(String name, boolean enabled) {
+        MutableComponent label = Component.literal(name + ": ");
+        return label.append(
+                Component.literal(enabled ? "ENABLED" : "DISABLED")
+                        .withStyle(enabled ? ChatFormatting.GREEN : ChatFormatting.RED)
+        );
+    }
+
+    private enum ModuleTab {
+        BALANCE_TWEAKS("Balance Tweaks") {
+            @Override
+            boolean enabled(CastTimeOverrides.ModuleStates states) {
+                return states.balanceTweaks();
+            }
+
+            @Override
+            CastTimeOverrides.ModuleStates withEnabled(CastTimeOverrides.ModuleStates states, boolean enabled) {
+                return new CastTimeOverrides.ModuleStates(
+                        enabled,
+                        states.spellReworks(),
+                        states.customSpells(),
+                        states.experimental()
+                );
+            }
+        },
+        SPELL_REWORKS("Spell Reworks") {
+            @Override
+            boolean enabled(CastTimeOverrides.ModuleStates states) {
+                return states.spellReworks();
+            }
+
+            @Override
+            CastTimeOverrides.ModuleStates withEnabled(CastTimeOverrides.ModuleStates states, boolean enabled) {
+                return new CastTimeOverrides.ModuleStates(
+                        states.balanceTweaks(),
+                        enabled,
+                        states.customSpells(),
+                        states.experimental()
+                );
+            }
+        },
+        CUSTOM_SPELLS("Custom Spells") {
+            @Override
+            boolean enabled(CastTimeOverrides.ModuleStates states) {
+                return states.customSpells();
+            }
+
+            @Override
+            CastTimeOverrides.ModuleStates withEnabled(CastTimeOverrides.ModuleStates states, boolean enabled) {
+                return new CastTimeOverrides.ModuleStates(
+                        states.balanceTweaks(),
+                        states.spellReworks(),
+                        enabled,
+                        states.experimental()
+                );
+            }
+        },
+        EXPERIMENTAL("Experimental") {
+            @Override
+            boolean enabled(CastTimeOverrides.ModuleStates states) {
+                return states.experimental();
+            }
+
+            @Override
+            CastTimeOverrides.ModuleStates withEnabled(CastTimeOverrides.ModuleStates states, boolean enabled) {
+                return new CastTimeOverrides.ModuleStates(
+                        states.balanceTweaks(),
+                        states.spellReworks(),
+                        states.customSpells(),
+                        enabled
+                );
+            }
+        };
+
+        private final String displayName;
+
+        ModuleTab(String displayName) {
+            this.displayName = displayName;
+        }
+
+        abstract boolean enabled(CastTimeOverrides.ModuleStates states);
+
+        abstract CastTimeOverrides.ModuleStates withEnabled(CastTimeOverrides.ModuleStates states, boolean enabled);
     }
 }

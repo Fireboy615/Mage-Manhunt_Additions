@@ -115,6 +115,35 @@ public final class CastTimeConfig {
         /** Generic projectile velocity override. Absolute = blocks/tick magnitude; multiplier = native velocity x value. */
         public Rule projectile_speed = null;
 
+        /** Projectile/entity collision hitbox. Absolute = target diameter in blocks; multiplier = native hitbox x value. */
+        public Rule hitbox_size = null;
+
+        /** Knockback strength. Absolute = raw strength; multiplier = native strength x value. */
+        public Rule knockback = null;
+
+        /** Area radius. Absolute = radius in blocks; multiplier = native radius x value. */
+        public Rule area_of_effect = null;
+
+        /** Status-effect duration. Absolute = seconds; multiplier = native duration x value. */
+        public Rule effect_duration = null;
+
+        /**
+         * Optional cloud/pool/field override. null = native behaviour, true = force/allow cloud, false = suppress native cloud creation when detectable.
+         */
+        public Boolean cloud_on_impact = null;
+
+        /** Lifetime of compatible lingering clouds/pools/fields. Absolute = seconds; multiplier = native lifetime x value. */
+        public Rule linger_duration = null;
+
+        /** Continuously retarget compatible cursor-ground spells while they are being cast. */
+        public Boolean follow_cursor = null;
+
+        /** Number of block/wall bounces for compatible projectile spells. Null/0 = native behaviour. */
+        public Integer bounces = null;
+
+        /** Active lifetime of CONTINUOUS casts. Absolute = seconds; multiplier = native continuous duration x value. */
+        public Rule cast_duration = null;
+
         /** vanilla, can_disable, cannot_disable. Only meaningful for direct shield-blockable hits. */
         public String shield_interaction = "vanilla";
 

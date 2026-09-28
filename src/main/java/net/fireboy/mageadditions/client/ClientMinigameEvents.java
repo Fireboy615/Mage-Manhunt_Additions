@@ -15,11 +15,18 @@ public final class ClientMinigameEvents {
         InputConstants.KEY_F8,
         "key.categories.mageadditions"
     );
+    private static final KeyMapping OPEN_SPELL_CONFIG = new KeyMapping(
+        "key.mageadditions.open_spell_config",
+        InputConstants.Type.KEYSYM,
+        InputConstants.KEY_F7,
+        "key.categories.mageadditions"
+    );
 
     private ClientMinigameEvents() {}
 
     public static void registerKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(OPEN_MINIGAME_MENU);
+        event.register(OPEN_SPELL_CONFIG);
     }
 
     public static void onClientTick(ClientTickEvent.Post event) {
@@ -28,6 +35,13 @@ public final class ClientMinigameEvents {
         while (OPEN_MINIGAME_MENU.consumeClick()) {
             if (minecraft.player != null && minecraft.getConnection() != null && minecraft.screen == null) {
                 PacketDistributor.sendToServer(OpenMinigameMenuRequestPayload.INSTANCE);
+            }
+        }
+
+        while (OPEN_SPELL_CONFIG.consumeClick()) {
+            if (minecraft.player != null && minecraft.getConnection() != null
+                    && !(minecraft.screen instanceof MageAdditionsConfigScreen)) {
+                minecraft.setScreen(new MageAdditionsConfigScreen(minecraft.screen));
             }
         }
     }

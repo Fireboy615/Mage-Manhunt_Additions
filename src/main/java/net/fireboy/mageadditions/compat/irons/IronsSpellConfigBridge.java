@@ -81,6 +81,15 @@ public final class IronsSpellConfigBridge {
     public static Settings read(AbstractSpell spell) {
         BackendInfo backend = backendInfo();
         if (backend.name().contains("3.14")) {
+            // NeoForge ConfigValue#get() throws while the owning spec has not
+            // been loaded yet. This is common on the physical client before a
+            // world/server config sync exists, and the spell browser can be
+            // opened during exactly that window. Never touch Iron's live
+            // ConfigValues until its spec explicitly reports loaded.
+            if (!legacySpecLoaded()) {
+                return defaults(spell);
+            }
+
             try {
                 Object parameters = legacySpellParameters(spell);
                 boolean enabled = (boolean) invokeNoArg(parameters, "enabled");
@@ -103,16 +112,18 @@ public final class IronsSpellConfigBridge {
                         allowCrafting
                 );
             } catch (Exception exception) {
-                MageAdditions.LOGGER.warn("Unable to read Iron's live config for {} through legacy adapter", spell.getSpellId(), exception);
+                MageAdditions.LOGGER.warn("Unable to read Iron's live config for {} through legacy adapter; using spell defaults", spell.getSpellId(), exception);
+                return defaults(spell);
             }
         } else if (backend.name().contains("3.15+")) {
             try {
                 return readModern(spell);
             } catch (Exception exception) {
-                MageAdditions.LOGGER.warn("Unable to read Iron's live config for {} through data-driven adapter", spell.getSpellId(), exception);
+                MageAdditions.LOGGER.warn("Unable to read Iron's live config for {} through data-driven adapter; using spell defaults", spell.getSpellId(), exception);
+                return defaults(spell);
             }
         }
-        return fallbackRead(spell);
+        return defaults(spell);
     }
 
     private static Settings readModern(AbstractSpell spell) throws Exception {
@@ -210,6 +221,9 @@ public final class IronsSpellConfigBridge {
         if (!backend.writable()) {
             return new SaveResult(false, backend.problem(), backend.name());
         }
+        if (backend.name().contains("3.14") && !legacySpecLoaded()) {
+            return new SaveResult(false, "Iron's server config is not loaded yet.", backend.name());
+        }
 
         try {
             applyLegacyValues(spell, settings);
@@ -243,6 +257,9 @@ public final class IronsSpellConfigBridge {
         BackendInfo backend = backendInfo();
         if (!backend.writable()) {
             return new SaveResult(false, backend.problem(), backend.name());
+        }
+        if (backend.name().contains("3.14") && !legacySpecLoaded()) {
+            return new SaveResult(false, "Iron's server config is not loaded yet.", backend.name());
         }
 
         try {
@@ -291,6 +308,33 @@ public final class IronsSpellConfigBridge {
             );
         } catch (Exception ignored) {
             return defaults;
+        }
+    }
+
+    /**
+     * True only after Iron's legacy NeoForge ModConfigSpec has accepted a
+     * loaded config. ConfigValue#get() is illegal before this point.
+     */
+    private static boolean legacySpecLoaded() {
+        try {
+            Class<?> serverConfigs = Class.forName(LEGACY_SERVER_CONFIGS, true, IronsSpellConfigBridge.class.getClassLoader());
+            Field specField = serverConfigs.getField("SPEC");
+            Object spec = specField.get(null);
+            if (spec == null) {
+                return false;
+            }
+
+            Method isLoaded = findMethod(spec.getClass(), "isLoaded", 0);
+            if (isLoaded == null) {
+                // Older NeoForge/Forge implementations did not expose the
+                // readiness check. Preserve compatibility there and let the
+                // guarded read below decide whether the values are available.
+                return true;
+            }
+            return Boolean.TRUE.equals(isLoaded.invoke(spec));
+        } catch (ReflectiveOperationException exception) {
+            MageAdditions.LOGGER.debug("Could not determine whether Iron's legacy config is loaded", exception);
+            return false;
         }
     }
 

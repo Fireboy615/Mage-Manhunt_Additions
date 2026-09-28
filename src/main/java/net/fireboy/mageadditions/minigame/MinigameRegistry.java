@@ -32,10 +32,10 @@ public final class MinigameRegistry {
     private static final Map<ResourceLocation, MinigameDefinition> GAMES = new LinkedHashMap<>();
 
     static {
-        register(mode(BLITZ_15_ID, "minigame.mageadditions.blitz_15", "minigame.mageadditions.blitz_15.description", 15 * 60, 3000, 33, true, true, false));
-        register(mode(STANDARD_30_ID, "minigame.mageadditions.standard_30", "minigame.mageadditions.standard_30.description", 30 * 60, 2000, 33, false, false, false));
-        register(mode(STANDARD_60_ID, "minigame.mageadditions.standard_60", "minigame.mageadditions.standard_60.description", 60 * 60, 4000, 33, false, false, false));
-        register(mode(PRACTICE_ARENA_ID, "minigame.mageadditions.practice_arena", "minigame.mageadditions.practice_arena.description", 0, 151, 151, false, false, true));
+        register(mode(BLITZ_15_ID, "minigame.mageadditions.blitz_15", "minigame.mageadditions.blitz_15.description", 15 * 60, 1500, 16.5, true, true, false));
+        register(mode(STANDARD_30_ID, "minigame.mageadditions.standard_30", "minigame.mageadditions.standard_30.description", 30 * 60, 1000, 16.5, false, false, false));
+        register(mode(STANDARD_60_ID, "minigame.mageadditions.standard_60", "minigame.mageadditions.standard_60.description", 60 * 60, 2000, 16.5, false, false, false));
+        register(mode(PRACTICE_ARENA_ID, "minigame.mageadditions.practice_arena", "minigame.mageadditions.practice_arena.description", 0, 75.5, 75.5, false, false, true));
     }
 
     private MinigameRegistry() {}

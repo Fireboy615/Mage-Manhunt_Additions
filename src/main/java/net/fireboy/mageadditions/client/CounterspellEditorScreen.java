@@ -4,18 +4,26 @@ import net.fireboy.mageadditions.config.CastTimeOverrides;
 import net.fireboy.mageadditions.config.CounterspellConfig;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
+import java.util.IdentityHashMap;
 import java.util.Locale;
+import java.util.Map;
 
 /** Dedicated UI for Mage Additions' Counterspell rework settings. */
 public final class CounterspellEditorScreen extends Screen {
     private static final int FIELD_WIDTH = 160;
     private static final int FIELD_HEIGHT = 20;
     private static final int ROW_GAP = 27;
+    private static final int SCROLLBAR_WIDTH = 6;
+    private static final int SCROLL_WHEEL_PIXELS = 22;
+    private static final int CONTENT_TOP = 58;
+    private static final int HELP_Y = 320;
+    private static final int CONTENT_BOTTOM = 380;
 
     private final Screen parent;
     private CounterspellConfig config;
@@ -34,6 +42,12 @@ public final class CounterspellEditorScreen extends Screen {
     private EditBox aimAssistBox;
     private EditBox angleBox;
 
+    private final Map<AbstractWidget, Integer> scrollBaseY = new IdentityHashMap<>();
+    private int scroll;
+    private int scrollViewportBottom;
+    private boolean scrollBarDragging;
+    private double scrollBarGrabOffset;
+
     public CounterspellEditorScreen(Screen parent) {
         super(Component.literal("Counterspell Rework Settings"));
         this.parent = parent;
@@ -45,6 +59,10 @@ public final class CounterspellEditorScreen extends Screen {
                 && this.minecraft.getConnection() != null
                 && !this.minecraft.hasSingleplayerServer();
         this.config = MageAdditionsConfigEditor.readCounterspell();
+        this.scrollBaseY.clear();
+        this.scroll = 0;
+        this.scrollBarDragging = false;
+        this.scrollViewportBottom = Math.max(CONTENT_TOP + 36, this.height - 72);
 
         int left = this.width / 2 - 210;
         int fieldX = this.width / 2 + 50;
@@ -54,6 +72,7 @@ public final class CounterspellEditorScreen extends Screen {
             this.config.enabled = !this.config.enabled;
             b.setMessage(toggleLabel("Rework", this.config.enabled));
         }).bounds(fieldX, y, FIELD_WIDTH, FIELD_HEIGHT).build());
+        registerScrollable(this.enabledButton, y);
         y += ROW_GAP;
 
         this.modeButton = addRenderableWidget(Button.builder(Component.literal("Mode: " + modeDisplay()), b -> {
@@ -61,29 +80,33 @@ public final class CounterspellEditorScreen extends Screen {
             b.setMessage(Component.literal("Mode: " + modeDisplay()));
             updateFieldStates();
         }).bounds(fieldX, y, FIELD_WIDTH, FIELD_HEIGHT).build());
+        registerScrollable(this.modeButton, y);
         y += ROW_GAP;
 
-        this.castTimeBox = numericBox(fieldX, y, Integer.toString(this.config.cast_time_ticks)); y += ROW_GAP;
-        this.rangeBox = numericBox(fieldX, y, format(this.config.range)); y += ROW_GAP;
-        this.aimAssistBox = numericBox(fieldX, y, format(this.config.aim_assist)); y += ROW_GAP;
-        this.angleBox = numericBox(fieldX, y, format(this.config.angle_degrees)); y += ROW_GAP;
+        this.castTimeBox = numericBox(fieldX, y, Integer.toString(this.config.cast_time_ticks)); registerScrollable(this.castTimeBox, y); y += ROW_GAP;
+        this.rangeBox = numericBox(fieldX, y, format(this.config.range)); registerScrollable(this.rangeBox, y); y += ROW_GAP;
+        this.aimAssistBox = numericBox(fieldX, y, format(this.config.aim_assist)); registerScrollable(this.aimAssistBox, y); y += ROW_GAP;
+        this.angleBox = numericBox(fieldX, y, format(this.config.angle_degrees)); registerScrollable(this.angleBox, y); y += ROW_GAP;
 
         this.losButton = addRenderableWidget(Button.builder(toggleLabel("Line of sight", this.config.require_line_of_sight), b -> {
             this.config.require_line_of_sight = !this.config.require_line_of_sight;
             b.setMessage(toggleLabel("Line of sight", this.config.require_line_of_sight));
         }).bounds(fieldX, y, FIELD_WIDTH, FIELD_HEIGHT).build());
+        registerScrollable(this.losButton, y);
         y += ROW_GAP;
 
         this.targetModeButton = addRenderableWidget(Button.builder(Component.literal("Cone target: " + targetModeDisplay()), b -> {
             this.config.target_mode = nextTargetMode(this.config.target_mode);
             b.setMessage(Component.literal("Cone target: " + targetModeDisplay()));
         }).bounds(fieldX, y, FIELD_WIDTH, FIELD_HEIGHT).build());
+        registerScrollable(this.targetModeButton, y);
         y += ROW_GAP;
 
         this.particlesButton = addRenderableWidget(Button.builder(toggleLabel("Debug particles", this.config.debug_particles), b -> {
             this.config.debug_particles = !this.config.debug_particles;
             b.setMessage(toggleLabel("Debug particles", this.config.debug_particles));
         }).bounds(fieldX, y, FIELD_WIDTH, FIELD_HEIGHT).build());
+        registerScrollable(this.particlesButton, y);
 
         int bottom = this.height - 30;
         this.saveButton = addRenderableWidget(Button.builder(Component.literal("Save"), b -> save())
@@ -93,6 +116,69 @@ public final class CounterspellEditorScreen extends Screen {
 
         updateFieldStates();
         setEditingEnabled(!this.readOnlyRemoteServer);
+        updateScrollableWidgetPositions();
+    }
+
+    private void registerScrollable(AbstractWidget widget, int baseY) {
+        this.scrollBaseY.put(widget, baseY);
+    }
+
+    private int maxScroll() {
+        return Math.max(0, CONTENT_BOTTOM - this.scrollViewportBottom);
+    }
+
+    private void setScroll(int value) {
+        this.scroll = Math.max(0, Math.min(maxScroll(), value));
+        updateScrollableWidgetPositions();
+    }
+
+    private void updateScrollableWidgetPositions() {
+        for (Map.Entry<AbstractWidget, Integer> entry : this.scrollBaseY.entrySet()) {
+            AbstractWidget widget = entry.getKey();
+            int y = entry.getValue() - this.scroll;
+            widget.setY(y);
+            widget.visible = y >= CONTENT_TOP && y + widget.getHeight() <= this.scrollViewportBottom;
+        }
+    }
+
+    private int scrollTrackLeft() {
+        return Math.min(this.width - 12, this.width / 2 + 218);
+    }
+
+    private int scrollTrackHeight() {
+        return Math.max(1, this.scrollViewportBottom - CONTENT_TOP);
+    }
+
+    private int scrollThumbHeight() {
+        if (maxScroll() <= 0) return scrollTrackHeight();
+        int totalHeight = CONTENT_BOTTOM - CONTENT_TOP;
+        return Math.max(18, scrollTrackHeight() * scrollTrackHeight() / Math.max(1, totalHeight));
+    }
+
+    private int scrollThumbTop() {
+        int travel = Math.max(0, scrollTrackHeight() - scrollThumbHeight());
+        if (travel == 0 || maxScroll() == 0) return CONTENT_TOP;
+        return CONTENT_TOP + (int) Math.round((double) this.scroll * travel / maxScroll());
+    }
+
+    private void setScrollFromThumbTop(double thumbTop) {
+        int travel = Math.max(0, scrollTrackHeight() - scrollThumbHeight());
+        if (travel == 0) {
+            setScroll(0);
+            return;
+        }
+        double fraction = (thumbTop - CONTENT_TOP) / travel;
+        fraction = Math.max(0.0, Math.min(1.0, fraction));
+        setScroll((int) Math.round(fraction * maxScroll()));
+    }
+
+    private void renderScrollBar(GuiGraphics graphics) {
+        if (maxScroll() <= 0) return;
+        int left = scrollTrackLeft();
+        graphics.fill(left, CONTENT_TOP, left + SCROLLBAR_WIDTH, this.scrollViewportBottom, 0x66000000);
+        int thumbTop = scrollThumbTop();
+        int thumbColor = this.scrollBarDragging ? 0xFFE0E0E0 : 0xFF9A9A9A;
+        graphics.fill(left, thumbTop, left + SCROLLBAR_WIDTH, thumbTop + scrollThumbHeight(), thumbColor);
     }
 
     private EditBox numericBox(int x, int y, String value) {
@@ -161,7 +247,8 @@ public final class CounterspellEditorScreen extends Screen {
         graphics.drawCenteredString(this.font, Component.literal("Mage Additions spell rework"), this.width / 2, 32, 0x888888);
 
         int left = this.width / 2 - 210;
-        int y = 76;
+        graphics.enableScissor(0, CONTENT_TOP, this.width, this.scrollViewportBottom);
+        int y = 76 - this.scroll;
         drawLabel(graphics, left, y, "Enabled"); y += ROW_GAP;
         drawLabel(graphics, left, y, "Mode"); y += ROW_GAP;
         drawLabel(graphics, left, y, "Cast time (ticks)"); y += ROW_GAP;
@@ -172,15 +259,16 @@ public final class CounterspellEditorScreen extends Screen {
         drawLabel(graphics, left, y, "Cone target mode"); y += ROW_GAP;
         drawLabel(graphics, left, y, "Cone debug particles");
 
-        int infoY = Math.min(this.height - 90, 320);
         graphics.drawWordWrap(
                 this.font,
                 Component.literal(modeHelp()).withStyle(ChatFormatting.GRAY),
                 left,
-                infoY,
+                HELP_Y - this.scroll,
                 420,
                 0xFFFFFF
         );
+        graphics.disableScissor();
+        renderScrollBar(graphics);
 
         if (!CastTimeOverrides.spellReworksEnabled()) {
             graphics.drawCenteredString(this.font, Component.literal("Spell Reworks module is OFF; these settings are stored but inactive.").withStyle(ChatFormatting.YELLOW), this.width / 2, this.height - 56, 0xFFFFFF);
@@ -277,6 +365,58 @@ public final class CounterspellEditorScreen extends Screen {
     private static String format(double value) {
         if (Math.abs(value - Math.rint(value)) < 0.000001) return Long.toString(Math.round(value));
         return String.format(Locale.ROOT, "%.3f", value).replaceAll("0+$", "").replaceAll("\\.$", "");
+    }
+
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (button == 0 && maxScroll() > 0) {
+            int left = scrollTrackLeft();
+            if (mouseX >= left - 2 && mouseX <= left + SCROLLBAR_WIDTH + 2
+                    && mouseY >= CONTENT_TOP && mouseY <= this.scrollViewportBottom) {
+                int thumbTop = scrollThumbTop();
+                int thumbHeight = scrollThumbHeight();
+                if (mouseY >= thumbTop && mouseY <= thumbTop + thumbHeight) {
+                    this.scrollBarGrabOffset = mouseY - thumbTop;
+                } else {
+                    this.scrollBarGrabOffset = thumbHeight / 2.0;
+                    setScrollFromThumbTop(mouseY - this.scrollBarGrabOffset);
+                }
+                this.scrollBarDragging = true;
+                return true;
+            }
+        }
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (button == 0 && this.scrollBarDragging) {
+            setScrollFromThumbTop(mouseY - this.scrollBarGrabOffset);
+            return true;
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0 && this.scrollBarDragging) {
+            this.scrollBarDragging = false;
+            return true;
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (maxScroll() > 0
+                && mouseY >= CONTENT_TOP && mouseY <= this.scrollViewportBottom
+                && scrollY != 0.0) {
+            int delta = (int) Math.round(scrollY * SCROLL_WHEEL_PIXELS);
+            if (delta == 0) delta = scrollY > 0.0 ? 1 : -1;
+            setScroll(this.scroll - delta);
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
     }
 
     @Override

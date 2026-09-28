@@ -23,6 +23,7 @@ import net.minecraft.world.level.storage.LevelResource;
 /** Small world-local recovery file so an interrupted match can come back paused after a restart. */
 final class MinigameSessionStore {
     private static final String FILE_NAME = "mageadditions-minigame-session.properties";
+    private static final String BORDER_UNITS_VERSION = "radius_v2";
 
     private MinigameSessionStore() {}
 
@@ -38,6 +39,7 @@ final class MinigameSessionStore {
         properties.setProperty("teamsEnabled", Boolean.toString(snapshot.teamsEnabled()));
         properties.setProperty("teamCount", Integer.toString(snapshot.teamCount()));
         properties.setProperty("durationSeconds", Integer.toString(snapshot.settings().durationSeconds()));
+        properties.setProperty("borderUnits", BORDER_UNITS_VERSION);
         properties.setProperty("initialBorderRadius", Double.toString(snapshot.settings().initialBorderSize()));
         properties.setProperty("finalBorderRadius", Double.toString(snapshot.settings().finalBorderSize()));
         properties.setProperty("randomTeleport", Boolean.toString(snapshot.settings().randomTeleport()));
@@ -89,16 +91,37 @@ final class MinigameSessionStore {
             UUID hostId = parseUuid(properties.getProperty("host", ""));
             boolean teamsEnabled = Boolean.parseBoolean(properties.getProperty("teamsEnabled", "false"));
             int teamCount = Integer.parseInt(properties.getProperty("teamCount", "0"));
+            MinigameDefinition definition = MinigameRegistry.get(gameId);
+            double fallbackInitial = definition == null ? 75.5 : definition.initialBorderSize();
+            double fallbackFinal = definition == null ? fallbackInitial : definition.finalBorderSize();
+            double initialRadius = readRadius(properties, "initialBorderRadius", "initialBorderSize", fallbackInitial);
+            double finalRadius = readRadius(properties, "finalBorderRadius", "finalBorderSize", fallbackFinal);
+            double currentBorderSize = readRadius(properties, "currentBorderRadius", "currentBorderSize", initialRadius);
+
+            // The first radius conversion accidentally kept Practice's old 151-block diameter
+            // constant as a 151-block radius. Recovery files from that build have the new
+            // *Radius keys but no borderUnits marker. Migrate that exact bad default once.
+            boolean oldBuggyPracticeRadius = !BORDER_UNITS_VERSION.equals(properties.getProperty("borderUnits", ""))
+                    && MinigameRegistry.PRACTICE_ARENA_ID.equals(gameId)
+                    && approximately(initialRadius, 151.0)
+                    && approximately(finalRadius, 151.0);
+            if (oldBuggyPracticeRadius) {
+                initialRadius = 75.5;
+                finalRadius = 75.5;
+                if (approximately(currentBorderSize, 151.0)) {
+                    currentBorderSize = 75.5;
+                }
+            }
+
             MinigameSettings settings = new MinigameSettings(
                     Integer.parseInt(properties.getProperty("durationSeconds", "0")),
-                    readRadius(properties, "initialBorderRadius", "initialBorderSize", 151.0),
-                    readRadius(properties, "finalBorderRadius", "finalBorderSize", 151.0),
+                    initialRadius,
+                    finalRadius,
                     Boolean.parseBoolean(properties.getProperty("randomTeleport", "false")),
                     MinigameSettings.KitPreset.valueOf(properties.getProperty("kitPreset", MinigameSettings.KitPreset.MODE_DEFAULT.name())),
                     properties.getProperty("customEquipmentPreset", "")
             ).validated();
             int matchTicksRemaining = Math.max(0, Integer.parseInt(properties.getProperty("matchTicksRemaining", "0")));
-            double currentBorderSize = readRadius(properties, "currentBorderRadius", "currentBorderSize", settings.initialBorderSize());
 
             return Optional.of(new Snapshot(
                     phase,
@@ -199,6 +222,10 @@ final class MinigameSessionStore {
             return Double.parseDouble(legacy) / 2.0;
         }
         return fallback;
+    }
+
+    private static boolean approximately(double a, double b) {
+        return Math.abs(a - b) < 1.0E-6D;
     }
 
     private static UUID parseUuid(String value) {

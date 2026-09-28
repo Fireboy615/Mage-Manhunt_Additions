@@ -1,7 +1,9 @@
 package net.fireboy.mageadditions.minigame;
 
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
+import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.player.AttackEntityEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
@@ -70,10 +72,27 @@ public final class MinigameServerEvents {
     }
 
     public static void onIncomingDamage(LivingIncomingDamageEvent event) {
-        if (event.getEntity() instanceof ServerPlayer player
-                && !player.level().isClientSide
-                && MinigameManager.isPregameProtected()) {
+        if (!(event.getEntity() instanceof ServerPlayer victim) || victim.level().isClientSide) {
+            return;
+        }
+        if (MinigameManager.isPregameProtected()) {
             event.setCanceled(true);
+            return;
+        }
+        Entity source = event.getSource().getEntity();
+        if (source instanceof ServerPlayer attacker) {
+            MinigameManager.recordDamage(attacker, victim, event.getAmount());
+        }
+    }
+
+    public static void onLivingDeath(LivingDeathEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer victim) || victim.level().isClientSide) {
+            return;
+        }
+        MinigameManager.onPracticePlayerDeath(victim);
+        Entity source = event.getSource().getEntity();
+        if (source instanceof ServerPlayer killer) {
+            MinigameManager.recordKill(killer, victim);
         }
     }
 

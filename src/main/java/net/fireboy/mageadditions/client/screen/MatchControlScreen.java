@@ -7,6 +7,7 @@ import net.fireboy.mageadditions.network.payload.ContinueMinigamePayload;
 import net.fireboy.mageadditions.network.payload.OpenMatchControlPayload;
 import net.fireboy.mageadditions.network.payload.PauseMinigamePayload;
 import net.fireboy.mageadditions.network.payload.RevivePlayerPayload;
+import net.fireboy.mageadditions.network.payload.RequestMatchControlRefreshPayload;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -30,8 +31,12 @@ public final class MatchControlScreen extends Screen {
      * closing/reopening the screen, which also avoids disturbing mouse movement.
      */
     public void applyState(OpenMatchControlPayload state) {
+        boolean controlsChanged = this.state.paused() != state.paused()
+                || !this.state.deadPlayers().equals(state.deadPlayers());
         this.state = state;
-        rebuildWidgets();
+        if (controlsChanged) {
+            rebuildWidgets();
+        }
     }
 
     @Override
@@ -77,6 +82,14 @@ public final class MatchControlScreen extends Screen {
         addRenderableWidget(Button.builder(Component.translatable("gui.done"), button -> onClose())
                 .bounds(width / 2 - 70, height - 34, 140, 20)
                 .build());
+    }
+
+
+    @Override
+    public void tick() {
+        super.tick();
+        // The host wants the live numbers to track the authoritative server every game tick.
+        PacketDistributor.sendToServer(RequestMatchControlRefreshPayload.INSTANCE);
     }
 
     @Override
