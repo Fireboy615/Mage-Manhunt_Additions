@@ -1,5 +1,6 @@
 package net.fireboy.mageadditions.spell;
 
+import io.redspace.ironsspellbooks.api.registry.SpellRegistry;
 import io.redspace.ironsspellbooks.api.spells.AbstractSpell;
 import io.redspace.ironsspellbooks.api.spells.CastType;
 import net.minecraft.world.entity.Entity;
@@ -28,6 +29,8 @@ import java.util.regex.Pattern;
  */
 public final class SpellCapabilities {
     private static final Map<Class<?>, StructuralCapabilities> CACHE = new ConcurrentHashMap<>();
+    private static final Map<Class<?>, String> PROJECTILE_SPELL_CACHE = new ConcurrentHashMap<>();
+    private static final Set<Class<?>> NO_PROJECTILE_SPELL = ConcurrentHashMap.newKeySet();
     private static final Pattern INTERNAL_CLASS_NAME = Pattern.compile("(?:[A-Za-z_$][A-Za-z0-9_$]*/)+[A-Za-z_$][A-Za-z0-9_$]*");
 
     private SpellCapabilities() {}
@@ -50,6 +53,63 @@ public final class SpellCapabilities {
                 structural.shieldInteraction(),
                 structural.targetingMode()
         );
+    }
+
+    /**
+     * Resolves the spell that owns a concrete projectile class. This is mainly
+     * used client-side for block bounce rendering because Iron's projectile
+     * spawn packet does not carry the originating spell id.
+     *
+     * <p>The lookup is structural and cached: first prefer a direct bytecode
+     * reference from the spell to the projectile class, then use the normalized
+     * spell/projectile names as a conservative registry-indirection fallback.</p>
+     */
+    public static AbstractSpell findSpellForProjectileClass(Class<?> projectileClass) {
+        if (projectileClass == null || !Projectile.class.isAssignableFrom(projectileClass)) return null;
+        String cachedId = PROJECTILE_SPELL_CACHE.get(projectileClass);
+        if (cachedId != null) {
+            AbstractSpell cached = SpellRegistry.getSpell(cachedId);
+            return cached == null || cached == SpellRegistry.none() ? null : cached;
+        }
+        if (NO_PROJECTILE_SPELL.contains(projectileClass)) return null;
+
+        String projectileInternalName = projectileClass.getName().replace('.', '/');
+        String projectileToken = normalizedEntityToken(projectileClass.getSimpleName());
+        AbstractSpell nameFallback = null;
+
+        for (AbstractSpell spell : SpellRegistry.REGISTRY.stream().toList()) {
+            if (spell == null || spell == SpellRegistry.none()) continue;
+            String spellBytes = readClassBytes(spell.getClass());
+            if (!spellBytes.isEmpty() && spellBytes.contains(projectileInternalName)) {
+                PROJECTILE_SPELL_CACHE.put(projectileClass, spell.getSpellId());
+                return spell;
+            }
+            if (nameFallback == null && projectileToken.equals(normalizedSpellIdToken(spell))) {
+                nameFallback = spell;
+            }
+        }
+
+        if (nameFallback != null) {
+            PROJECTILE_SPELL_CACHE.put(projectileClass, nameFallback.getSpellId());
+            return nameFallback;
+        }
+        NO_PROJECTILE_SPELL.add(projectileClass);
+        return null;
+    }
+
+    private static String normalizedSpellIdToken(AbstractSpell spell) {
+        String id = spell.getSpellId();
+        int colon = id == null ? -1 : id.indexOf(':');
+        String path = colon >= 0 ? id.substring(colon + 1) : id;
+        return path == null ? "" : path.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+    }
+
+    private static String normalizedEntityToken(String simpleName) {
+        if (simpleName == null) return "";
+        return simpleName.toLowerCase(Locale.ROOT)
+                .replace("projectile", "")
+                .replace("entity", "")
+                .replaceAll("[^a-z0-9]", "");
     }
 
     private static StructuralCapabilities inspect(Class<?> spellClass) {

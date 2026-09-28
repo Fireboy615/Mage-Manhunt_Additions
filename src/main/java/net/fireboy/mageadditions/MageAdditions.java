@@ -8,9 +8,10 @@ import net.fireboy.mageadditions.minigame.MinigameRegistry;
 import net.fireboy.mageadditions.minigame.MinigameServerEvents;
 import net.fireboy.mageadditions.network.MinigameNetwork;
 import net.fireboy.mageadditions.network.SpellConfigServerEvents;
-import net.fireboy.mageadditions.spell.SpellBehaviorServerEvents;
+import net.fireboy.mageadditions.registry.ModEffects;
+import net.fireboy.mageadditions.registry.ModSpells;
 import net.fireboy.mageadditions.spell.ProjectileOverrideServerEvents;
-import net.fireboy.mageadditions.spell.GenericSpellOverrideServerEvents;
+import net.fireboy.mageadditions.spell.SpellBehaviorServerEvents;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.common.NeoForge;
@@ -22,24 +23,24 @@ public final class MageAdditions {
     public static final Logger LOGGER = LogUtils.getLogger();
 
     public MageAdditions(IEventBus modBus) {
+        // Mage Additions registries.
+        ModEffects.register(modBus);
+        ModSpells.register(modBus);
+
+        // Existing startup/bootstrap behavior.
         CastTimeOverrides.reload();
         MinigameRegistry.bootstrap();
 
+        // Existing network registration. This must stay on the MOD bus or
+        // client -> server minigame payloads are rejected at runtime.
         modBus.addListener(MinigameNetwork::register);
 
+        // Existing NeoForge gameplay/event listeners.
         NeoForge.EVENT_BUS.addListener(ModCommands::register);
         NeoForge.EVENT_BUS.addListener(MagehunterBalanceEvents::onEntityJoinLevel);
         NeoForge.EVENT_BUS.addListener(SpellConfigServerEvents::onPlayerLoggedIn);
         NeoForge.EVENT_BUS.addListener(SpellBehaviorServerEvents::onServerTick);
         NeoForge.EVENT_BUS.addListener(ProjectileOverrideServerEvents::onEntityJoinLevel);
-        NeoForge.EVENT_BUS.addListener(GenericSpellOverrideServerEvents::onEntityJoinLevel);
-        NeoForge.EVENT_BUS.addListener(GenericSpellOverrideServerEvents::onEntityLeaveLevel);
-        NeoForge.EVENT_BUS.addListener(GenericSpellOverrideServerEvents::onEntityTickPre);
-        NeoForge.EVENT_BUS.addListener(GenericSpellOverrideServerEvents::onProjectileImpact);
-        NeoForge.EVENT_BUS.addListener(GenericSpellOverrideServerEvents::onServerTickPost);
-        NeoForge.EVENT_BUS.addListener(GenericSpellOverrideServerEvents::onIncomingDamage);
-        NeoForge.EVENT_BUS.addListener(GenericSpellOverrideServerEvents::onLivingKnockBack);
-        NeoForge.EVENT_BUS.addListener(GenericSpellOverrideServerEvents::onEffectAdded);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onPlayerLoggedIn);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onPlayerLoggedOut);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onPlayerRespawn);
@@ -50,7 +51,6 @@ public final class MageAdditions {
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onEntityInteractSpecific);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onAttackEntity);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onIncomingDamage);
-        NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onLivingDeath);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onServerTick);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onServerStarted);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onServerStopping);

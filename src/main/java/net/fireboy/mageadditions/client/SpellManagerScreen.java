@@ -40,6 +40,7 @@ public final class SpellManagerScreen extends Screen {
     private static final int INFO_SCROLL_WHEEL_PIXELS = 28;
 
     private final Screen parent;
+    private final String namespaceFilter;
 
     private EditBox searchBox;
     private List<AbstractSpell> allSpells = List.of();
@@ -55,8 +56,20 @@ public final class SpellManagerScreen extends Screen {
     private double infoScrollBarGrabOffset;
 
     public SpellManagerScreen(Screen parent) {
-        super(Component.literal("Mage Additions - Spell Manager"));
+        this(parent, null, Component.literal("Mage Additions - Spell Manager"));
+    }
+
+    /**
+     * Creates a spell manager restricted to one mod namespace. This is used by
+     * the Custom Spells tab so Mage Additions spells stay separate from the
+     * general Iron's/addon spell tweaker.
+     */
+    public SpellManagerScreen(Screen parent, String namespaceFilter, Component title) {
+        super(title);
         this.parent = parent;
+        this.namespaceFilter = namespaceFilter == null || namespaceFilter.isBlank()
+                ? null
+                : namespaceFilter.toLowerCase(Locale.ROOT);
     }
 
     @Override
@@ -112,7 +125,10 @@ public final class SpellManagerScreen extends Screen {
      * Iron's SpellRegistry, without Mage Additions needing to know their IDs.
      */
     private void loadSpellRegistry() {
-        List<AbstractSpell> discovered = new ArrayList<>(SpellRegistry.REGISTRY.stream().toList());
+        List<AbstractSpell> discovered = new ArrayList<>(SpellRegistry.REGISTRY.stream()
+                .filter(spell -> this.namespaceFilter == null
+                        || spell.getSpellResource().getNamespace().equalsIgnoreCase(this.namespaceFilter))
+                .toList());
         discovered.sort(
                 Comparator
                         .comparing((AbstractSpell spell) -> displayName(spell).toLowerCase(Locale.ROOT))
@@ -214,7 +230,8 @@ public final class SpellManagerScreen extends Screen {
         graphics.drawCenteredString(this.font, this.title, this.width / 2, 14, 0xFFFFFF);
         graphics.drawCenteredString(
                 this.font,
-                Component.literal(this.filteredSpells.size() + " / " + this.allSpells.size() + " registered spells"),
+                Component.literal(this.filteredSpells.size() + " / " + this.allSpells.size()
+                        + (this.namespaceFilter == null ? " registered spells" : " custom spells")),
                 this.width / 2,
                 26,
                 0x909090

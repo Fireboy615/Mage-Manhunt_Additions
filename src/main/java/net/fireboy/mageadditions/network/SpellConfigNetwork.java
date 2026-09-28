@@ -1,6 +1,7 @@
 package net.fireboy.mageadditions.network;
 
 import net.fireboy.mageadditions.MageAdditions;
+import net.fireboy.mageadditions.network.payload.ProjectileBouncePayload;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
@@ -19,7 +20,7 @@ public final class SpellConfigNetwork {
 
     @SubscribeEvent
     public static void register(RegisterPayloadHandlersEvent event) {
-        PayloadRegistrar registrar = event.registrar("12");
+        PayloadRegistrar registrar = event.registrar("13");
 
         registrar.playToServer(
                 SpellConfigPayloads.Request.TYPE,
@@ -55,6 +56,12 @@ public final class SpellConfigNetwork {
                 SpellConfigPayloads.RuntimeSync.TYPE,
                 SpellConfigPayloads.RuntimeSync.STREAM_CODEC,
                 SpellConfigClientPayloadHandler::handle
+        );
+
+        registrar.playToClient(
+                ProjectileBouncePayload.TYPE,
+                ProjectileBouncePayload.STREAM_CODEC,
+                ProjectileBouncePayload::handle
         );
     }
 }

@@ -5,6 +5,7 @@ import io.redspace.ironsspellbooks.api.registry.SpellRegistry;
 import io.redspace.ironsspellbooks.api.spells.AbstractSpell;
 import net.fireboy.mageadditions.config.CastTimeOverrides;
 import net.fireboy.mageadditions.mixin.MobEffectInstanceAccessor;
+import net.fireboy.mageadditions.network.payload.ProjectileBouncePayload;
 import net.minecraft.core.Direction;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -18,6 +19,7 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
+import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 import net.neoforged.neoforge.event.entity.ProjectileImpactEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
@@ -43,7 +45,11 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class GenericSpellOverrideServerEvents {
     private static final Map<UUID, String> SOURCE_SPELLS = new ConcurrentHashMap<>();
     private static final Map<UUID, PendingKnockback> PENDING_KNOCKBACK = new ConcurrentHashMap<>();
-    private static final Map<UUID, Integer> REMAINING_BOUNCES = new ConcurrentHashMap<>();
+    private static final Map<UUID, Integer> SERVER_REMAINING_BOUNCES = new ConcurrentHashMap<>();
+    private static final Map<UUID, Integer> CLIENT_REMAINING_BOUNCES = new ConcurrentHashMap<>();
+    private static final Map<Integer, Integer> CLIENT_SYNCED_BOUNCES = new ConcurrentHashMap<>();
+    private static final Map<UUID, Integer> SERVER_LAST_BOUNCE_TICK = new ConcurrentHashMap<>();
+    private static final Map<UUID, Integer> CLIENT_LAST_BOUNCE_TICK = new ConcurrentHashMap<>();
     private static final Set<UUID> LINGER_DURATION_APPLIED = ConcurrentHashMap.newKeySet();
     private static final Map<UUID, NativeCloudSource> NATIVE_CLOUD_SOURCES = new ConcurrentHashMap<>();
     private static final List<PendingCloudImpact> PENDING_CLOUDS = new ArrayList<>();
@@ -69,6 +75,12 @@ public final class GenericSpellOverrideServerEvents {
         AbstractSpell nativeCloudSpell = !event.loadedFromDisk() ? matchNativeCloudSource(entity) : null;
         if (spell == null) spell = nativeCloudSpell;
         if (spell == null) spell = spellFromOwner(entity);
+        if (spell == null && entity instanceof Projectile projectile) {
+            // Some Iron projectiles outlive the cast/owner lookup window. Resolve
+            // them structurally at spawn time as well, so clients receive bounce
+            // state before the projectile's first possible local block impact.
+            spell = SpellCapabilities.findSpellForProjectileClass(projectile.getClass());
+        }
         if (spell == null) return;
 
         SOURCE_SPELLS.put(entity.getUUID(), spell.getSpellId());
@@ -81,17 +93,31 @@ public final class GenericSpellOverrideServerEvents {
                     entity, spell.getSpellId(), ownerUuid(entity)
             ));
         }
-        if (entity instanceof Projectile && capabilities.bounces()) {
+        if (entity instanceof Projectile projectile && capabilities.bounces()) {
             int count = CastTimeOverrides.behavior(spell).bounceCount();
-            if (count > 0) REMAINING_BOUNCES.put(entity.getUUID(), count);
+            if (count > 0) {
+                SERVER_REMAINING_BOUNCES.put(entity.getUUID(), count);
+                // Tell clients up-front that this concrete projectile is bounce-enabled.
+                // Client-side spell/config inference is intentionally not authoritative:
+                // without this sync a client can run Iron's normal impact/discard path
+                // even though the server kept the projectile alive.
+                syncBounceState(projectile, count, false);
+            }
         }
     }
 
     public static void onEntityLeaveLevel(EntityLeaveLevelEvent event) {
         UUID id = event.getEntity().getUUID();
+        if (event.getEntity().level().isClientSide()) {
+            CLIENT_REMAINING_BOUNCES.remove(id);
+            CLIENT_SYNCED_BOUNCES.remove(event.getEntity().getId());
+            CLIENT_LAST_BOUNCE_TICK.remove(id);
+            return;
+        }
         SOURCE_SPELLS.remove(id);
         PENDING_KNOCKBACK.remove(id);
-        REMAINING_BOUNCES.remove(id);
+        SERVER_REMAINING_BOUNCES.remove(id);
+        SERVER_LAST_BOUNCE_TICK.remove(id);
         LINGER_DURATION_APPLIED.remove(id);
         NATIVE_CLOUD_SOURCES.remove(id);
     }
@@ -119,6 +145,7 @@ public final class GenericSpellOverrideServerEvents {
         Projectile projectile = event.getProjectile();
         if (projectile.level().isClientSide()) return;
         AbstractSpell spell = spellFromTracked(projectile);
+        if (spell == null) spell = SpellCapabilities.findSpellForProjectileClass(projectile.getClass());
         if (spell == null) spell = spellFromOwner(projectile);
         if (spell == null) return;
 
@@ -195,16 +222,111 @@ public final class GenericSpellOverrideServerEvents {
         processPendingClouds(server);
     }
 
+    /**
+     * Fallback hook for Iron's AbstractMagicProjectile block impacts. On the
+     * 3.14.x line the normal impact event is enough server-side, but the client
+     * previously skipped our listener and would still let projectiles such as
+     * Magic Missile discard themselves locally. Newer Iron builds also route
+     * some block impacts internally. The mixin calls this before onHitBlock() so
+     * both sides keep the reflected projectile alive.
+     *
+     * <p>This runs on both logical sides. The server uses the exact tracked
+     * originating spell; the client can infer the spell from the projectile
+     * class so the projectile stays visible while the authoritative server
+     * performs the same reflection.</p>
+     */
+    public static boolean tryHandleIronBlockBounce(Projectile projectile, BlockHitResult hit) {
+        // Once the server has identified a bounce-enabled projectile it sends an
+        // entity-id keyed state packet to every client. Prefer that state on the
+        // client instead of independently reading Mage Additions config or trying
+        // to infer the spell from the projectile class. This keeps visual impact
+        // handling in lockstep with the authoritative server.
+        if (projectile.level().isClientSide()) {
+            Integer syncedRemaining = CLIENT_SYNCED_BOUNCES.get(projectile.getId());
+            if (syncedRemaining != null) {
+                UUID id = projectile.getUUID();
+                int tick = projectile.tickCount;
+                Integer lastTick = CLIENT_LAST_BOUNCE_TICK.get(id);
+                if (lastTick != null && lastTick == tick) return true;
+                if (syncedRemaining <= 0) return false;
+                if (!applyBounceMotion(projectile, hit)) return false;
+                CLIENT_LAST_BOUNCE_TICK.put(id, tick);
+                CLIENT_SYNCED_BOUNCES.put(projectile.getId(), syncedRemaining - 1);
+                return true;
+            }
+        }
+
+        AbstractSpell spell = spellFromTracked(projectile);
+        if (spell == null) {
+            spell = SpellCapabilities.findSpellForProjectileClass(projectile.getClass());
+        }
+        if (spell == null && !projectile.level().isClientSide()) {
+            spell = spellFromOwner(projectile);
+        }
+        return spell != null && tryBounce(projectile, spell, hit);
+    }
+
+    /** Called by the client payload handler, including when the entity spawn packet
+     * has not arrived yet. The id-keyed state can therefore pre-arm the mixin before
+     * the projectile's first local block collision. */
+    public static void acceptClientBounceState(int entityId, int remainingBounces) {
+        if (remainingBounces < 0) {
+            CLIENT_SYNCED_BOUNCES.remove(entityId);
+        } else {
+            CLIENT_SYNCED_BOUNCES.put(entityId, remainingBounces);
+        }
+    }
+
+    private static void syncBounceState(Projectile projectile, int remainingBounces, boolean bounced) {
+        Vec3 velocity = projectile.getDeltaMovement();
+        PacketDistributor.sendToAllPlayers(new ProjectileBouncePayload(
+                projectile.getId(),
+                Math.max(0, remainingBounces),
+                bounced,
+                projectile.getX(), projectile.getY(), projectile.getZ(),
+                velocity.x, velocity.y, velocity.z
+        ));
+    }
+
     private static boolean tryBounce(Projectile projectile, AbstractSpell spell, BlockHitResult hit) {
         if (!SpellCapabilities.detect(spell).bounces()) return false;
-        int remaining = REMAINING_BOUNCES.getOrDefault(
-                projectile.getUUID(),
+        boolean clientSide = projectile.level().isClientSide();
+        Map<UUID, Integer> remainingBounces = clientSide
+                ? CLIENT_REMAINING_BOUNCES
+                : SERVER_REMAINING_BOUNCES;
+        Map<UUID, Integer> lastBounceTick = clientSide
+                ? CLIENT_LAST_BOUNCE_TICK
+                : SERVER_LAST_BOUNCE_TICK;
+        UUID id = projectile.getUUID();
+        int tick = projectile.tickCount;
+
+        // A single physical block impact can be observed by both NeoForge's
+        // ProjectileImpactEvent and a mixin hook. Treat a second observation in
+        // the same entity tick as the already-consumed bounce: keep cancelling
+        // the impact, but do not reflect again or spend another bounce charge.
+        Integer lastTick = lastBounceTick.get(id);
+        if (lastTick != null && lastTick == tick) return true;
+
+        int remaining = remainingBounces.getOrDefault(
+                id,
                 CastTimeOverrides.behavior(spell).bounceCount()
         );
         if (remaining <= 0) return false;
+        if (!applyBounceMotion(projectile, hit)) return false;
 
+        int next = remaining - 1;
+        lastBounceTick.put(id, tick);
+        remainingBounces.put(id, next);
+        if (!clientSide) {
+            syncBounceState(projectile, next, true);
+        }
+        return true;
+    }
+
+    private static boolean applyBounceMotion(Projectile projectile, BlockHitResult hit) {
         Vec3 velocity = projectile.getDeltaMovement();
         if (velocity.lengthSqr() < 1.0E-8) return false;
+
         Direction direction = hit.getDirection();
         Vec3 reflected = switch (direction.getAxis()) {
             case X -> new Vec3(-velocity.x, velocity.y, velocity.z);
@@ -212,7 +334,6 @@ public final class GenericSpellOverrideServerEvents {
             case Z -> new Vec3(velocity.x, velocity.y, -velocity.z);
         };
 
-        REMAINING_BOUNCES.put(projectile.getUUID(), remaining - 1);
         Vec3 normal = new Vec3(direction.getStepX(), direction.getStepY(), direction.getStepZ());
         projectile.setPos(hit.getLocation().add(normal.scale(0.06)));
         projectile.setDeltaMovement(reflected);

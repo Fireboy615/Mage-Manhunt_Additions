@@ -1,5 +1,6 @@
 package net.fireboy.mageadditions.client;
 
+import net.fireboy.mageadditions.MageAdditions;
 import net.fireboy.mageadditions.config.CastTimeOverrides;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;
@@ -137,9 +138,19 @@ public final class MageAdditionsConfigScreen extends Screen {
                             }
                         }).bounds(left, y, width, CONTROL_HEIGHT).build()
                 );
-                case CUSTOM_SPELLS, EXPERIMENTAL -> {
-                    // These pages intentionally exist now even before they gain
-                    // extra controls, keeping the config structure consistent.
+                case CUSTOM_SPELLS -> this.addRenderableWidget(
+                        Button.builder(Component.literal("Open Custom Spell Manager"), button -> {
+                            if (this.minecraft != null) {
+                                this.minecraft.setScreen(new SpellManagerScreen(
+                                        this,
+                                        MageAdditions.MODID,
+                                        Component.literal("Mage Additions - Custom Spells")
+                                ));
+                            }
+                        }).bounds(left, y, width, CONTROL_HEIGHT).build()
+                );
+                case EXPERIMENTAL -> {
+                    // Reserved for future opt-in testing controls.
                 }
             }
 
@@ -195,7 +206,7 @@ public final class MageAdditionsConfigScreen extends Screen {
                         "Dedicated replacements and larger behaviour changes for existing Iron's Spells spells."
                 );
                 case CUSTOM_SPELLS -> Component.literal(
-                        "Master switch for Mage Additions custom spells. More custom-spell controls can be added here."
+                        "Mage Additions custom spells. Open the manager to configure Piercing and future custom spells."
                 );
                 case EXPERIMENTAL -> Component.literal(
                         "Opt-in testing features that are kept separate from normal balance and rework settings."

@@ -5,18 +5,12 @@
   "compatibilityLevel": "JAVA_21",
   "mixins": [
     "AbstractSpellMixin",
-    "MagicDataMixin",
     "CounterspellSpellMixin",
-    "UtilsTargetingMixin",
-    "MobEffectInstanceAccessor"
+    "ProjectileMixin",
+    "EntityMixin",
+    "IronMagicProjectilePiercingMixin"
   ],
   "injectors": {
     "defaultRequire": 1
-  },
-  "client": [
-    "AbstractSpellClientMixin",
-    "MinecraftGlowMixin",
-    "CreativeModeTabsAccessor",
-    "WorldCreationUiStateMixin"
-  ]
+  }
 }
