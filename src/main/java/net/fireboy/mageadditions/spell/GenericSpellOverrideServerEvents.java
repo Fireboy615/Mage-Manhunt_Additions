@@ -32,7 +32,6 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -45,6 +44,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class GenericSpellOverrideServerEvents {
     private static final Map<UUID, String> SOURCE_SPELLS = new ConcurrentHashMap<>();
     private static final Map<UUID, PendingKnockback> PENDING_KNOCKBACK = new ConcurrentHashMap<>();
+    private static final double MIN_KNOCKBACK_VECTOR_SQR = 1.0E-5D;
+    private static final double FALLBACK_KNOCKBACK_STRENGTH = 0.4D;
     private static final Map<UUID, Integer> SERVER_REMAINING_BOUNCES = new ConcurrentHashMap<>();
     private static final Map<UUID, Integer> CLIENT_REMAINING_BOUNCES = new ConcurrentHashMap<>();
     private static final Map<Integer, Integer> CLIENT_SYNCED_BOUNCES = new ConcurrentHashMap<>();
@@ -177,7 +178,15 @@ public final class GenericSpellOverrideServerEvents {
         if (capabilities.knockback()) {
             var override = CastTimeOverrides.behavior(spell).knockbackOverride();
             if (override.enabled()) {
-                PENDING_KNOCKBACK.put(event.getEntity().getUUID(), new PendingKnockback(spell.getSpellId(), event.getEntity().tickCount + 2));
+                LivingEntity target = event.getEntity();
+                Vec3 ratio = resolveKnockbackRatio(target, direct, event.getSource().getEntity());
+                PENDING_KNOCKBACK.put(target.getUUID(), new PendingKnockback(
+                        spell.getSpellId(),
+                        target,
+                        ratio.x,
+                        ratio.z,
+                        target.tickCount + 2
+                ));
             }
         }
 
@@ -198,11 +207,40 @@ public final class GenericSpellOverrideServerEvents {
     }
 
     public static void onLivingKnockBack(LivingKnockBackEvent event) {
-        PendingKnockback pending = PENDING_KNOCKBACK.remove(event.getEntity().getUUID());
-        if (pending == null || pending.expiresAtTick() < event.getEntity().tickCount) return;
+        UUID targetId = event.getEntity().getUUID();
+        PendingKnockback pending = PENDING_KNOCKBACK.get(targetId);
+        if (pending == null) return;
+        if (pending.expiresAtTick() < event.getEntity().tickCount) {
+            PENDING_KNOCKBACK.remove(targetId, pending);
+            return;
+        }
+
         AbstractSpell spell = SpellRegistry.getSpell(pending.spellId());
-        if (spell == null || spell == SpellRegistry.none()) return;
+        if (spell == null || spell == SpellRegistry.none()) {
+            PENDING_KNOCKBACK.remove(targetId, pending);
+            return;
+        }
+
         event.setStrength((float) CastTimeOverrides.resolveKnockback(spell, event.getStrength()));
+
+        // Preserve a spell's intentional native direction when it supplied one.
+        // Iron/vanilla derive many projectile hits from horizontal projectile
+        // velocity, though, and vertical or nearly stationary magic projectiles
+        // can pass (0, 0). LivingEntity.knockback deliberately randomizes that
+        // case, so replace only unusable vectors with the stable direction we
+        // captured from the damaging spell.
+        if (!isUsableKnockbackVector(event.getRatioX(), event.getRatioZ())) {
+            if (isUsableKnockbackVector(pending.ratioX(), pending.ratioZ())) {
+                event.setRatioX(pending.ratioX());
+                event.setRatioZ(pending.ratioZ());
+            } else {
+                Vec3 fallback = deterministicTargetFacingRatio(event.getEntity());
+                event.setRatioX(fallback.x);
+                event.setRatioZ(fallback.z);
+            }
+        }
+
+        PENDING_KNOCKBACK.remove(targetId, pending);
     }
 
     public static void onEffectAdded(MobEffectEvent.Added event) {
@@ -218,6 +256,7 @@ public final class GenericSpellOverrideServerEvents {
 
     public static void onServerTickPost(ServerTickEvent.Post event) {
         MinecraftServer server = event.getServer();
+        processPendingKnockbackFallbacks();
         updateFollowCursor(server);
         processPendingClouds(server);
     }
@@ -568,6 +607,94 @@ public final class GenericSpellOverrideServerEvents {
         }
     }
 
+
+    private static void processPendingKnockbackFallbacks() {
+        for (Map.Entry<UUID, PendingKnockback> entry : PENDING_KNOCKBACK.entrySet()) {
+            PendingKnockback pending = entry.getValue();
+            LivingEntity target = pending.target();
+            if (target == null || target.isRemoved() || !target.isAlive() || target.level().isClientSide()) {
+                PENDING_KNOCKBACK.remove(entry.getKey(), pending);
+                continue;
+            }
+            if (pending.expiresAtTick() < target.tickCount) {
+                PENDING_KNOCKBACK.remove(entry.getKey(), pending);
+                continue;
+            }
+
+            AbstractSpell spell = SpellRegistry.getSpell(pending.spellId());
+            if (spell == null || spell == SpellRegistry.none()) {
+                PENDING_KNOCKBACK.remove(entry.getKey(), pending);
+                continue;
+            }
+
+            // If no native LivingKnockBackEvent was emitted for this damaging spell,
+            // create one with vanilla's normal 0.4 hurt baseline. Absolute overrides
+            // still resolve to their configured value; multiplier overrides now have
+            // a predictable baseline instead of silently doing nothing.
+            Vec3 ratio = isUsableKnockbackVector(pending.ratioX(), pending.ratioZ())
+                    ? new Vec3(pending.ratioX(), 0.0, pending.ratioZ())
+                    : deterministicTargetFacingRatio(target);
+            target.knockback(FALLBACK_KNOCKBACK_STRENGTH, ratio.x, ratio.z);
+
+            // onLivingKnockBack normally removes this exact record synchronously.
+            // The conditional cleanup keeps the map safe if another mod cancels or
+            // short-circuits the event before our listener is reached.
+            PENDING_KNOCKBACK.remove(entry.getKey(), pending);
+        }
+    }
+
+    private static Vec3 resolveKnockbackRatio(LivingEntity target, Entity direct, Entity owner) {
+        if (direct instanceof Projectile projectile) {
+            Vec3 motion = projectile.getDeltaMovement();
+            Vec3 fromTravel = new Vec3(-motion.x, 0.0, -motion.z);
+            if (isUsableKnockbackVector(fromTravel.x, fromTravel.z)) return fromTravel;
+
+            Entity projectileOwner = projectile.getOwner();
+            Vec3 fromOwner = ratioFromSource(target, projectileOwner);
+            if (isUsableKnockbackVector(fromOwner.x, fromOwner.z)) return fromOwner;
+        }
+
+        // Non-projectile spell entities (AoE centers, rays, clouds, etc.) often
+        // provide the most accurate radial source point themselves.
+        Vec3 fromDirect = ratioFromSource(target, direct);
+        if (isUsableKnockbackVector(fromDirect.x, fromDirect.z)) return fromDirect;
+
+        Vec3 fromOwner = ratioFromSource(target, owner);
+        if (isUsableKnockbackVector(fromOwner.x, fromOwner.z)) return fromOwner;
+
+        if (direct != null) {
+            Vec3 motion = direct.getDeltaMovement();
+            Vec3 fromTravel = new Vec3(-motion.x, 0.0, -motion.z);
+            if (isUsableKnockbackVector(fromTravel.x, fromTravel.z)) return fromTravel;
+        }
+
+        if (owner != null) {
+            Vec3 look = owner.getLookAngle();
+            Vec3 fromLook = new Vec3(-look.x, 0.0, -look.z);
+            if (isUsableKnockbackVector(fromLook.x, fromLook.z)) return fromLook;
+        }
+
+        return Vec3.ZERO;
+    }
+
+    private static Vec3 ratioFromSource(LivingEntity target, Entity source) {
+        if (source == null || source == target) return Vec3.ZERO;
+        return new Vec3(source.getX() - target.getX(), 0.0, source.getZ() - target.getZ());
+    }
+
+    private static boolean isUsableKnockbackVector(double x, double z) {
+        return Double.isFinite(x) && Double.isFinite(z) && x * x + z * z >= MIN_KNOCKBACK_VECTOR_SQR;
+    }
+
+    private static Vec3 deterministicTargetFacingRatio(LivingEntity target) {
+        Vec3 look = target.getLookAngle();
+        Vec3 horizontal = new Vec3(look.x, 0.0, look.z);
+        if (isUsableKnockbackVector(horizontal.x, horizontal.z)) return horizontal;
+
+        double radians = Math.toRadians(target.getYRot());
+        return new Vec3(-Math.sin(radians), 0.0, Math.cos(radians));
+    }
+
     private static AbstractSpell spellFromDamageSource(Entity direct, Entity owner) {
         AbstractSpell spell = spellFromSource(direct);
         return spell != null ? spell : spellFromSource(owner);
@@ -615,7 +742,13 @@ public final class GenericSpellOverrideServerEvents {
         return spell == null || spell == SpellRegistry.none() ? null : spell;
     }
 
-    private record PendingKnockback(String spellId, int expiresAtTick) {}
+    private record PendingKnockback(
+            String spellId,
+            LivingEntity target,
+            double ratioX,
+            double ratioZ,
+            int expiresAtTick
+    ) {}
 
     private record NativeCloudSource(Entity source, String spellId, UUID ownerId) {}
 

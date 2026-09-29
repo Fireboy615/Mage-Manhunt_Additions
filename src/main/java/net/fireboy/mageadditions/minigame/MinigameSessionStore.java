@@ -92,7 +92,7 @@ final class MinigameSessionStore {
             boolean teamsEnabled = Boolean.parseBoolean(properties.getProperty("teamsEnabled", "false"));
             int teamCount = Integer.parseInt(properties.getProperty("teamCount", "0"));
             MinigameDefinition definition = MinigameRegistry.get(gameId);
-            double fallbackInitial = definition == null ? 75.5 : definition.initialBorderSize();
+            double fallbackInitial = definition == null ? 75 : definition.initialBorderSize();
             double fallbackFinal = definition == null ? fallbackInitial : definition.finalBorderSize();
             double initialRadius = readRadius(properties, "initialBorderRadius", "initialBorderSize", fallbackInitial);
             double finalRadius = readRadius(properties, "finalBorderRadius", "finalBorderSize", fallbackFinal);
@@ -103,13 +103,13 @@ final class MinigameSessionStore {
             // *Radius keys but no borderUnits marker. Migrate that exact bad default once.
             boolean oldBuggyPracticeRadius = !BORDER_UNITS_VERSION.equals(properties.getProperty("borderUnits", ""))
                     && MinigameRegistry.PRACTICE_ARENA_ID.equals(gameId)
-                    && approximately(initialRadius, 151.0)
-                    && approximately(finalRadius, 151.0);
+                    && approximately(initialRadius, 150.0)
+                    && approximately(finalRadius, 150.0);
             if (oldBuggyPracticeRadius) {
-                initialRadius = 75.5;
-                finalRadius = 75.5;
-                if (approximately(currentBorderSize, 151.0)) {
-                    currentBorderSize = 75.5;
+                initialRadius = 75;
+                finalRadius = 75;
+                if (approximately(currentBorderSize, 150.0)) {
+                    currentBorderSize = 75;
                 }
             }
 

@@ -1,5 +1,17 @@
 {
   "spell.mageadditions.piercing": "Piercing",
   "effect.mageadditions.piercing": "Piercing",
-  "spell.mageadditions.piercing.guide": "Imbue yourself with piercing magic for a duration. While active, projectiles you fire pass through creatures they hit and can continue into additional targets. Projectiles still collide with blocks normally."
+  "effect.mageadditions.mirror_cloak": "Mirror Cloak",
+  "spell.mageadditions.piercing.guide": "Imbue yourself with piercing magic for a duration. While active, projectiles you fire pass through creatures they hit and can continue into additional targets. Projectiles still collide with blocks normally.",
+  "spell.mageadditions.mirror_image": "Mirror Image",
+  "spell.mageadditions.mirror_image.guide": "Vanish completely and leave behind a convincing copy of yourself. The copy raises a shield, evades its first two hits, then disappears in a poof on the next hit. It remembers your equipped spells and fake-casts them at creatures that attack it; straightforward projectile spells are reproduced visually but all damage from the copy is nullified.",
+  "spell.mageadditions.capture": "Capture",
+  "spell.mageadditions.capture.guide": "Trap the living creature you are aiming at in place. Captured players can rapidly press the Struggle key to break free early. Cast Capture again while you have a captive to release them. Non-player creatures remain trapped until the spell expires or you release them.",
+  "spell.mageadditions.capture.escape_info": "Players can struggle free early",
+  "key.mageadditions.capture_struggle": "Struggle / Escape Capture",
+  "message.mageadditions.capture.no_target": "Capture found no living target.",
+  "message.mageadditions.capture.captured": "Captured!",
+  "message.mageadditions.capture.captured_player": "Captured! Spam the Struggle key to break free.",
+  "message.mageadditions.capture.released_by_caster": "Released by the caster.",
+  "message.mageadditions.capture.escaped": "You broke free from Capture!"
 }

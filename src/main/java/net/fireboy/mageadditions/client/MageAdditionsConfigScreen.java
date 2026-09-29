@@ -206,7 +206,7 @@ public final class MageAdditionsConfigScreen extends Screen {
                         "Dedicated replacements and larger behaviour changes for existing Iron's Spells spells."
                 );
                 case CUSTOM_SPELLS -> Component.literal(
-                        "Mage Additions custom spells. Open the manager to configure Piercing and future custom spells."
+                        "Mage Additions custom spells. Open the manager to configure Piercing, Mace Infusion, Mirror Image, and future custom spells."
                 );
                 case EXPERIMENTAL -> Component.literal(
                         "Opt-in testing features that are kept separate from normal balance and rework settings."

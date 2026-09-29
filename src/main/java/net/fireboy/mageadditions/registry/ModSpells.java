@@ -3,7 +3,9 @@ package net.fireboy.mageadditions.registry;
 import io.redspace.ironsspellbooks.api.registry.SpellRegistry;
 import io.redspace.ironsspellbooks.api.spells.AbstractSpell;
 import net.fireboy.mageadditions.MageAdditions;
+import net.fireboy.mageadditions.spell.MirrorImageSpell;
 import net.fireboy.mageadditions.spell.MaceInfusionSpell;
+import net.fireboy.mageadditions.spell.CaptureSpell;
 import net.fireboy.mageadditions.spell.PiercingSpell;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.registries.DeferredHolder;
@@ -16,8 +18,14 @@ public final class ModSpells {
     public static final DeferredHolder<AbstractSpell, AbstractSpell> PIERCING =
         SPELLS.register("piercing", PiercingSpell::new);
 
+    public static final DeferredHolder<AbstractSpell, AbstractSpell> MIRROR_IMAGE =
+        SPELLS.register("mirror_image", MirrorImageSpell::new);
+
     public static final DeferredHolder<AbstractSpell, AbstractSpell> MACE_INFUSION =
         SPELLS.register("mace_infusion", MaceInfusionSpell::new);
+
+    public static final DeferredHolder<AbstractSpell, AbstractSpell> CAPTURE =
+        SPELLS.register("capture", CaptureSpell::new);
 
     private ModSpells() {
     }

@@ -264,6 +264,20 @@ public final class IronsSpellConfigBridge {
 
         try {
             for (Map.Entry<AbstractSpell, Settings> entry : updates.entrySet()) {
+                // Iron's 3.14.x returns DEFAULT_CONFIG for spells that were not
+                // present when its legacy server config was built (notably addon
+                // spells registered later). DEFAULT_CONFIG is made of plain
+                // Suppliers, not mutable ConfigValues. Those spells already use
+                // their registry/default values on both sides, so there is
+                // nothing useful to write during a client runtime sync.
+                if (!hasMutableLegacyConfig(entry.getKey())) {
+                    MageAdditions.LOGGER.debug(
+                            "Skipping Iron's runtime config write for {} because it has no mutable legacy config entry",
+                            entry.getKey().getSpellId()
+                    );
+                    continue;
+                }
+
                 applyLegacyValues(entry.getKey(), entry.getValue());
                 invalidateSpellCache(entry.getKey());
             }
@@ -282,6 +296,11 @@ public final class IronsSpellConfigBridge {
         }
 
         Map<String, Object> values = discoverConfigValues(parameters);
+        if (values.isEmpty()) {
+            throw new IllegalStateException(
+                    "Iron's spell config for " + spell.getSpellId() + " is not backed by mutable legacy values"
+            );
+        }
         setConfigValue(values, KEY_ENABLED, settings.enabled());
         setConfigValue(values, KEY_SCHOOL, settings.school().toString());
         setConfigValue(values, KEY_MAX_LEVEL, settings.maxLevel());
@@ -345,9 +364,10 @@ public final class IronsSpellConfigBridge {
     }
 
     /**
-     * Discovers ConfigValues by their stable config-path leaf (e.g. MaxLevel)
-     * rather than by Iron's private Java field name. This survives private-field
-     * renames within the legacy config implementation.
+     * Discovers mutable spell ConfigValues without depending on one specific
+     * NeoForge ConfigValue implementation. Iron's 3.14.8 stores these in fields
+     * declared as Supplier, while the runtime objects are ModConfigSpec values.
+     * Prefer Iron's own stable field names, then fall back to config-path leaves.
      */
     private static Map<String, Object> discoverConfigValues(Object parameters) throws Exception {
         Map<String, Object> result = new LinkedHashMap<>();
@@ -358,23 +378,49 @@ public final class IronsSpellConfigBridge {
             }
             field.setAccessible(true);
             Object value = field.get(parameters);
-            if (value == null) {
+            if (value == null || findMethod(value.getClass(), "set", 1) == null) {
+                // DEFAULT_CONFIG and addon fallback configs contain lambda/plain
+                // Suppliers here. They are readable, but intentionally not
+                // mutable and must not be treated as live ConfigValues.
+                continue;
+            }
+
+            String fieldKey = legacyFieldKey(field.getName());
+            if (fieldKey != null) {
+                result.put(fieldKey, value);
                 continue;
             }
 
             Method getPath = findMethod(value.getClass(), "getPath", 0);
-            if (getPath == null) {
-                continue;
-            }
-
-            Object rawPath = getPath.invoke(value);
-            if (rawPath instanceof List<?> path && !path.isEmpty()) {
-                String leaf = String.valueOf(path.get(path.size() - 1));
-                result.put(leaf, value);
+            if (getPath != null) {
+                Object rawPath = getPath.invoke(value);
+                if (rawPath instanceof List<?> path && !path.isEmpty()) {
+                    String leaf = String.valueOf(path.get(path.size() - 1));
+                    result.put(leaf, value);
+                }
             }
         }
 
         return result;
+    }
+
+    private static String legacyFieldKey(String fieldName) {
+        return switch (fieldName) {
+            case "ENABLED" -> KEY_ENABLED;
+            case "SCHOOL" -> KEY_SCHOOL;
+            case "MAX_LEVEL" -> KEY_MAX_LEVEL;
+            case "MIN_RARITY" -> KEY_MIN_RARITY;
+            case "M_MULT" -> KEY_MANA_MULTIPLIER;
+            case "P_MULT" -> KEY_POWER_MULTIPLIER;
+            case "CS" -> KEY_COOLDOWN_SECONDS;
+            case "ALLOW_CRAFTING" -> KEY_ALLOW_CRAFTING;
+            default -> null;
+        };
+    }
+
+    private static boolean hasMutableLegacyConfig(AbstractSpell spell) throws Exception {
+        Object parameters = legacySpellParameters(spell);
+        return parameters != null && !discoverConfigValues(parameters).isEmpty();
     }
 
     private static void setConfigValue(Map<String, Object> values, String key, Object value) throws Exception {
@@ -384,17 +430,18 @@ public final class IronsSpellConfigBridge {
         }
 
         Method set = findMethod(configValue.getClass(), "set", 1);
-        Method clearCache = findMethod(configValue.getClass(), "clearCache", 0);
-        if (set == null || clearCache == null) {
+        if (set == null) {
             throw new IllegalStateException("Iron's config entry '" + key + "' is not a mutable NeoForge ConfigValue");
         }
 
         set.invoke(configValue, value);
 
-        // ConfigValue#get() is cached in NeoForge. set() updates non-restart
-        // values in current 1.21.1 NeoForge, but clear explicitly as a defensive
-        // compatibility step before Iron's immediately re-reads the value.
-        clearCache.invoke(configValue);
+        // clearCache exists on the 1.21.1 NeoForge implementation used by this
+        // pack, but make it optional so this bridge survives small API changes.
+        Method clearCache = findMethod(configValue.getClass(), "clearCache", 0);
+        if (clearCache != null) {
+            clearCache.invoke(configValue);
+        }
     }
 
     private static void saveLegacySpec() throws Exception {

@@ -71,7 +71,7 @@ public final class MinigameClientPayloadHandler {
     }
 
     public static void handle(TeamOutlinePayload payload, IPayloadContext context) {
-        context.enqueueWork(() -> ClientMinigameState.setTeammates(payload.enabled(), payload.teammates()));
+        context.enqueueWork(() -> ClientMinigameState.setTeammates(payload.enabled(), payload.teammates(), payload.color()));
     }
 
     public static void handle(CloseTeamSelectionPayload payload, IPayloadContext context) {

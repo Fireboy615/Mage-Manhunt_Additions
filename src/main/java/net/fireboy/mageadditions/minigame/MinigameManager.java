@@ -99,8 +99,10 @@ public final class MinigameManager {
             return;
         }
 
+        // The host-selected team count is authoritative. Player count must never
+        // silently create extra teams; multiple players are allowed on the same team.
         int validatedTeams = useTeams
-                ? Math.max(2, Math.min(Math.max(requestedTeamCount, server.getPlayerList().getPlayerCount()), game.teams().size()))
+                ? Math.max(2, Math.min(requestedTeamCount, game.teams().size()))
                 : 0;
         activeGame = gameId;
         teamsEnabled = useTeams;
@@ -176,11 +178,7 @@ public final class MinigameManager {
             return;
         }
 
-        if (isTeamTakenByOther(player.getUUID(), teamId)) {
-            player.sendSystemMessage(Component.literal("That colour/team is already taken by another player.").withStyle(ChatFormatting.RED));
-            return;
-        }
-
+        // Teams are shared choices: any number of players may select the same active team.
         TEAM_SELECTIONS.put(player.getUUID(), teamId);
         assignScoreboardTeam(player, game.team(teamId));
         MinecraftServer server = player.getServer();
@@ -257,8 +255,7 @@ public final class MinigameManager {
         initializeMatchScoreboard(server);
 
         ServerLevel level = server.overworld();
-        WorldBorder border = level.getWorldBorder();
-        border.setCenter(0.0, 0.0);
+        WorldBorder border = centeredMinigameBorder(server);
         // Do not allow border damage during spawn placement. Players are moved first, then damage is enabled.
         border.setDamageSafeZone(0.0);
         border.setDamagePerBlock(0.0);
@@ -314,8 +311,9 @@ public final class MinigameManager {
         grantPracticeOp(player);
         player.setGameMode(GameType.CREATIVE);
         refillPlayer(player);
-        // Practice always starts with everybody safely randomized inside the active arena border.
-        if (!randomTeleport(player, level)) {
+        // Do not shuffle players who are already standing inside the Practice arena.
+        // Players outside the active border (or in another dimension) get a safe random spawn inside it.
+        if (!isInsideBorder(player, level) && !randomTeleport(player, level)) {
             ensureInsideBorder(player, level);
         }
         applyStarterKit(player, game, settings);
@@ -453,7 +451,7 @@ public final class MinigameManager {
                 if (game.practice()) {
                     enforcePracticeBorder(server);
                 } else {
-                    server.overworld().getWorldBorder().setSize(radiusToDiameter(snapshot.currentBorderSize()));
+                    centeredMinigameBorder(server).setSize(radiusToDiameter(snapshot.currentBorderSize()));
                 }
             }
 
@@ -584,7 +582,7 @@ public final class MinigameManager {
         unfreezeGameTicks(server);
         setPvp(server, true);
 
-        WorldBorder border = server.overworld().getWorldBorder();
+        WorldBorder border = centeredMinigameBorder(server);
         if (game.practice()) {
             enforcePracticeBorder(server);
         } else {
@@ -685,12 +683,7 @@ public final class MinigameManager {
             return;
         }
 
-        if (isTeamTakenByOther(targetId, teamId)) {
-            operator.sendSystemMessage(Component.literal("That colour/team is already taken by another player.").withStyle(ChatFormatting.RED));
-            sendMatchControlState(operator);
-            return;
-        }
-
+        // OP reassignment follows the same rule as player selection: teams have no capacity lock.
         TEAM_SELECTIONS.put(targetId, teamId);
         MinigameDefinition.TeamDefinition team = game.team(teamId);
         if (team != null) {
@@ -749,12 +742,9 @@ public final class MinigameManager {
             return;
         }
 
-        int activeTeamCount = Math.min(game.teams().size(), Math.max(teamCount, players.size()));
-        if (players.size() > activeTeamCount) {
-            operator.sendSystemMessage(Component.literal("There are more players than available unique team colours.").withStyle(ChatFormatting.RED));
-            return;
-        }
-        teamCount = activeTeamCount;
+        // Randomisation must stay within exactly the number of teams selected by the host.
+        // Multiple players per team are expected, so never expand teamCount to match player count.
+        int activeTeamCount = Math.min(game.teams().size(), Math.max(2, teamCount));
 
         // Fisher-Yates using Minecraft's own RNG avoids another dependency and
         // produces a random ordering before the balanced round-robin assignment.
@@ -768,7 +758,7 @@ public final class MinigameManager {
 
         for (int i = 0; i < players.size(); i++) {
             UUID playerId = players.get(i);
-            MinigameDefinition.TeamDefinition team = game.teams().get(i);
+            MinigameDefinition.TeamDefinition team = game.teams().get(i % activeTeamCount);
             TEAM_SELECTIONS.put(playerId, team.id());
 
             ServerPlayer online = server.getPlayerList().getPlayer(playerId);
@@ -870,8 +860,16 @@ public final class MinigameManager {
             if (server != null) {
                 enforcePracticeBorder(server);
             }
+
+            // Vanilla carries the player's gamemode across respawn. Prefer the mode captured at
+            // death when available, but fall back to the respawned player's current mode instead
+            // of forcing Creative. This keeps Survival/Adventure/Creative exactly as the player died.
+            GameType respawnMode = player.gameMode.getGameModeForPlayer();
             GameType deathMode = PRACTICE_DEATH_GAMEMODES.remove(player.getUUID());
-            if (deathMode == null) deathMode = GameType.CREATIVE;
+            if (deathMode == null) {
+                deathMode = respawnMode;
+            }
+
             if (phase == Phase.PAUSED) {
                 // Keep the actual death gamemode saved; spectator is only the temporary pause state.
                 PRACTICE_DEATH_GAMEMODES.put(player.getUUID(), deathMode);
@@ -879,8 +877,11 @@ public final class MinigameManager {
                 freezePlayer(player);
             } else {
                 player.setGameMode(deathMode);
-                if (server != null && !randomTeleport(player, server.overworld())) {
-                    ensureInsideBorder(player, server.overworld());
+                if (server != null) {
+                    ServerLevel level = server.overworld();
+                    if (!isInsideBorder(player, level) && !randomTeleport(player, level)) {
+                        ensureInsideBorder(player, level);
+                    }
                 }
             }
             return;
@@ -979,7 +980,7 @@ public final class MinigameManager {
     }
 
     private static void stopBorder(MinecraftServer server) {
-        WorldBorder border = server.overworld().getWorldBorder();
+        WorldBorder border = centeredMinigameBorder(server);
         border.setSize(border.getSize());
     }
 
@@ -1035,6 +1036,20 @@ public final class MinigameManager {
                     true
             );
         }
+    }
+
+    private static boolean isInsideBorder(ServerPlayer player, ServerLevel level) {
+        if (player.serverLevel() != level) {
+            return false;
+        }
+        WorldBorder border = level.getWorldBorder();
+        double half = border.getSize() / 2.0D;
+        double minX = border.getCenterX() - half;
+        double maxX = border.getCenterX() + half;
+        double minZ = border.getCenterZ() - half;
+        double maxZ = border.getCenterZ() + half;
+        return player.getX() >= minX && player.getX() <= maxX
+                && player.getZ() >= minZ && player.getZ() <= maxZ;
     }
 
     private static void ensureInsideBorder(ServerPlayer player, ServerLevel level) {
@@ -1481,7 +1496,14 @@ public final class MinigameManager {
                 teammates.add(candidate.getUUID());
             }
         }
-        PacketDistributor.sendToPlayer(viewer, new TeamOutlinePayload(true, teammates));
+
+        int outlineColor = 0xFFFFFF;
+        MinigameDefinition game = activeDefinition();
+        MinigameDefinition.TeamDefinition team = game == null ? null : game.team(viewerTeam);
+        if (team != null && team.color().getColor() != null) {
+            outlineColor = team.color().getColor();
+        }
+        PacketDistributor.sendToPlayer(viewer, new TeamOutlinePayload(true, teammates, outlineColor));
     }
 
     private static void prepareScoreboardTeams(MinecraftServer server, MinigameDefinition game) {
@@ -1540,10 +1562,15 @@ public final class MinigameManager {
         List<ServerPlayer> players = server.getPlayerList().getPlayers();
         if (players.isEmpty() || players.stream().anyMatch(player -> !TEAM_SELECTIONS.containsKey(player.getUUID()))) return false;
         if (!teamsEnabled) return true;
-        Set<ResourceLocation> unique = new HashSet<>();
+
+        MinigameDefinition game = activeDefinition();
+        if (game == null) return false;
+
+        // Readiness only requires each online player to have selected one of the
+        // currently active teams. Teammates are allowed to make the same choice.
         for (ServerPlayer player : players) {
             ResourceLocation team = TEAM_SELECTIONS.get(player.getUUID());
-            if (team == null || !unique.add(team)) return false;
+            if (team == null || !isActiveTeam(game, team)) return false;
         }
         return true;
     }
@@ -1557,14 +1584,6 @@ public final class MinigameManager {
         return raw.length() <= 16 ? raw : raw.substring(0, 16);
     }
 
-    private static boolean isTeamTakenByOther(UUID playerId, ResourceLocation teamId) {
-        for (Map.Entry<UUID, ResourceLocation> entry : TEAM_SELECTIONS.entrySet()) {
-            if (!entry.getKey().equals(playerId) && teamId.equals(entry.getValue())) {
-                return true;
-            }
-        }
-        return false;
-    }
 
     public static void onPracticePlayerDeath(ServerPlayer player) {
         MinigameDefinition game = activeDefinition();
@@ -1653,6 +1672,19 @@ public final class MinigameManager {
     }
 
     /**
+     * Every Mage Manhunt arena is origin-centered. Reasserting this on each
+     * mutation path also fixes recovered/continued matches if another command or
+     * mod moved the vanilla world border while the game was paused.
+     */
+    private static WorldBorder centeredMinigameBorder(MinecraftServer server) {
+        WorldBorder border = server.overworld().getWorldBorder();
+        if (Math.abs(border.getCenterX()) > 1.0E-6D || Math.abs(border.getCenterZ()) > 1.0E-6D) {
+            border.setCenter(0.0D, 0.0D);
+        }
+        return border;
+    }
+
+    /**
      * Re-assert the Practice border from the authoritative settings rather than
      * trusting transient WorldBorder/recovery state. This makes reconnect, pause,
      * continue and respawn all observe the exact same arena boundary.
@@ -1661,11 +1693,8 @@ public final class MinigameManager {
         if (server == null || !isPracticeActive()) {
             return;
         }
-        WorldBorder border = server.overworld().getWorldBorder();
+        WorldBorder border = centeredMinigameBorder(server);
         double desiredDiameter = radiusToDiameter(activeSettings.initialBorderSize());
-        if (Math.abs(border.getCenterX()) > 1.0E-6D || Math.abs(border.getCenterZ()) > 1.0E-6D) {
-            border.setCenter(0.0, 0.0);
-        }
         if (Math.abs(border.getSize() - desiredDiameter) > 1.0E-6D) {
             border.setSize(desiredDiameter);
         }

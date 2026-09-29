@@ -5,10 +5,27 @@
   "compatibilityLevel": "JAVA_21",
   "mixins": [
     "AbstractSpellMixin",
+    "MagicDataMixin",
     "CounterspellSpellMixin",
+    "UtilsTargetingMixin",
+    "MobEffectInstanceAccessor",
     "ProjectileMixin",
     "EntityMixin",
-    "IronMagicProjectilePiercingMixin"
+    "IronMagicProjectilePiercingMixin",
+    "AbstractMagicProjectileMixin",
+    "BloodSlashProjectileMixin",
+    "AeromancyFlightActivationMixin",
+    "AeromancyFlightEffectMixin",
+    "FeatherFlightFallDamageMixin",
+    "ConnectionAccessor"
+  ],
+  "client": [
+    "AbstractSpellClientMixin",
+    "MinecraftGlowMixin",
+    "LevelRendererOutlineColorMixin",
+    "CreativeModeTabsAccessor",
+    "WorldCreationUiStateMixin",
+    "LocalPlayerFeatherFlightMixin"
   ],
   "injectors": {
     "defaultRequire": 1

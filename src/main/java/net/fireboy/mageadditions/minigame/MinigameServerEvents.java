@@ -72,7 +72,7 @@ public final class MinigameServerEvents {
     }
 
     public static void onIncomingDamage(LivingIncomingDamageEvent event) {
-        if (!(event.getEntity() instanceof ServerPlayer victim) || victim.level().isClientSide) {
+        if (event.isCanceled() || !(event.getEntity() instanceof ServerPlayer victim) || victim.level().isClientSide) {
             return;
         }
         if (MinigameManager.isPregameProtected()) {

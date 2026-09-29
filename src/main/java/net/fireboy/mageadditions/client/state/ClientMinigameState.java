@@ -10,6 +10,7 @@ import net.fireboy.mageadditions.network.payload.LobbyStatePayload;
 public final class ClientMinigameState {
     private static final Set<UUID> TEAMMATES = new HashSet<>();
     private static boolean teammateOutlinesEnabled;
+    private static int teammateOutlineColor = 0xFFFFFF;
     private static LobbyStatePayload lobbyState;
     private static List<String> equipmentPresets = List.of();
 
@@ -31,16 +32,25 @@ public final class ClientMinigameState {
         return equipmentPresets;
     }
 
-    public static void setTeammates(boolean enabled, Iterable<UUID> teammates) {
+    public static void setTeammates(boolean enabled, Iterable<UUID> teammates, int color) {
         TEAMMATES.clear();
         for (UUID teammate : teammates) {
             TEAMMATES.add(teammate);
         }
         teammateOutlinesEnabled = enabled;
+        teammateOutlineColor = color & 0xFFFFFF;
+    }
+
+    public static void setTeammates(boolean enabled, Iterable<UUID> teammates) {
+        setTeammates(enabled, teammates, 0xFFFFFF);
     }
 
     public static boolean shouldHighlight(UUID entityId) {
         return teammateOutlinesEnabled && TEAMMATES.contains(entityId);
+    }
+
+    public static int teammateOutlineColor() {
+        return teammateOutlineColor;
     }
 
     public static void clearLobby() {
@@ -50,6 +60,7 @@ public final class ClientMinigameState {
     public static void clearAll() {
         lobbyState = null;
         teammateOutlinesEnabled = false;
+        teammateOutlineColor = 0xFFFFFF;
         TEAMMATES.clear();
         equipmentPresets = List.of();
     }

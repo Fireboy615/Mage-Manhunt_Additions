@@ -26,5 +26,6 @@ public final class MageAdditionsClient {
         modBus.addListener(ClientMinigameEvents::registerKeyMappings);
         NeoForge.EVENT_BUS.addListener(ClientMinigameEvents::onClientTick);
         NeoForge.EVENT_BUS.addListener(ClientFovEvents::onComputeFovModifier);
+        NeoForge.EVENT_BUS.addListener(ClientMirrorImageEvents::onRenderPlayer);
     }
 }

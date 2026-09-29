@@ -2,6 +2,7 @@ package net.fireboy.mageadditions.registry;
 
 import net.fireboy.mageadditions.MageAdditions;
 import net.fireboy.mageadditions.effect.MaceInfusionEffect;
+import net.fireboy.mageadditions.effect.MirrorCloakEffect;
 import net.fireboy.mageadditions.effect.PiercingEffect;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.world.effect.MobEffect;
@@ -15,6 +16,9 @@ public final class ModEffects {
 
     public static final DeferredHolder<MobEffect, MobEffect> PIERCING =
         EFFECTS.register("piercing", PiercingEffect::new);
+
+    public static final DeferredHolder<MobEffect, MobEffect> MIRROR_CLOAK =
+        EFFECTS.register("mirror_cloak", MirrorCloakEffect::new);
 
     public static final DeferredHolder<MobEffect, MobEffect> MACE_INFUSION =
         EFFECTS.register("mace_infusion", MaceInfusionEffect::new);

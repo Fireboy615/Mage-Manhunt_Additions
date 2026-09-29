@@ -9,34 +9,34 @@ import io.redspace.ironsspellbooks.api.spells.CastType;
 import io.redspace.ironsspellbooks.api.spells.SpellRarity;
 import io.redspace.ironsspellbooks.api.util.Utils;
 import net.fireboy.mageadditions.MageAdditions;
-import net.fireboy.mageadditions.registry.ModEffects;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.Level;
 
 import java.util.List;
 
 /**
- * Self buff that makes every projectile owned by the caster pass through entities.
- * Projectiles still collide with blocks normally.
+ * Deception spell that surrounds the caster with player-shaped moving images.
+ * Level I forms a square, Level II a pentagon, Level III a hexagon.
  */
-public final class PiercingSpell extends AbstractSpell {
+public final class MirrorImageSpell extends AbstractSpell {
     private static final ResourceLocation SPELL_ID =
-        ResourceLocation.fromNamespaceAndPath(MageAdditions.MODID, "piercing");
+            ResourceLocation.fromNamespaceAndPath(MageAdditions.MODID, "mirror_image");
 
     private final DefaultConfig defaultConfig = new DefaultConfig()
-        .setMinRarity(SpellRarity.RARE)
-        .setSchoolResource(SchoolRegistry.ENDER_RESOURCE)
-        .setMaxLevel(5)
-        .setCooldownSeconds(30)
-        .build();
+            .setMinRarity(SpellRarity.EPIC)
+            .setSchoolResource(SchoolRegistry.ENDER_RESOURCE)
+            .setMaxLevel(3)
+            .setCooldownSeconds(45)
+            .build();
 
-    public PiercingSpell() {
-        this.baseManaCost = 40;
-        this.manaCostPerLevel = 10;
+    public MirrorImageSpell() {
+        this.baseManaCost = 80;
+        this.manaCostPerLevel = 20;
         this.castTime = 20;
     }
 
@@ -63,16 +63,15 @@ public final class PiercingSpell extends AbstractSpell {
         ));
     }
 
-    private static int getDurationTicks(int spellLevel) {
-        return 20 * (10 + (10 * Math.max(1, spellLevel)));
+    public static int getDurationTicks(int spellLevel) {
+        int effectiveLevel = Math.max(1, spellLevel);
+        return 20 * (8 + (4 * Math.min(effectiveLevel, 3)));
     }
 
     @Override
     public void onCast(Level level, int spellLevel, LivingEntity caster, CastSource castSource, MagicData magicData) {
-        if (!level.isClientSide) {
-            // 20s at level I, +10s per spell level after that.
-            int durationTicks = getDurationTicks(spellLevel);
-            caster.addEffect(new MobEffectInstance(ModEffects.PIERCING, durationTicks, 0, false, false, true));
+        if (level instanceof ServerLevel serverLevel && caster instanceof ServerPlayer player) {
+            MirrorImageManager.createMirrorImage(serverLevel, player, spellLevel);
         }
 
         super.onCast(level, spellLevel, caster, castSource, magicData);

@@ -1,6 +1,7 @@
 package net.fireboy.mageadditions.network;
 
 import net.fireboy.mageadditions.network.payload.AdminAssignTeamPayload;
+import net.fireboy.mageadditions.network.payload.CaptureStrugglePayload;
 import net.fireboy.mageadditions.network.payload.DeleteEquipmentPresetPayload;
 import net.fireboy.mageadditions.network.payload.EquipmentPresetListPayload;
 import net.fireboy.mageadditions.network.payload.RandomizeTeamsPayload;
@@ -29,6 +30,10 @@ public final class MinigameNetwork {
 
     public static void register(RegisterPayloadHandlersEvent event) {
         PayloadRegistrar registrar = event.registrar("5");
+
+        registrar.playToServer(CaptureStrugglePayload.TYPE, CaptureStrugglePayload.STREAM_CODEC, (payload, context) -> {
+            if (context.player() instanceof net.minecraft.server.level.ServerPlayer player) context.enqueueWork(() -> net.fireboy.mageadditions.spell.CaptureManager.struggle(player));
+        });
 
         registrar.playToServer(
                 OpenMinigameMenuRequestPayload.TYPE,

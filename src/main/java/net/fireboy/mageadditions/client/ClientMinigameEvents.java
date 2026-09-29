@@ -2,6 +2,7 @@ package net.fireboy.mageadditions.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import net.fireboy.mageadditions.network.payload.OpenMinigameMenuRequestPayload;
+import net.fireboy.mageadditions.network.payload.CaptureStrugglePayload;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
@@ -15,6 +16,7 @@ public final class ClientMinigameEvents {
         InputConstants.KEY_F8,
         "key.categories.mageadditions"
     );
+    private static final KeyMapping STRUGGLE = new KeyMapping("key.mageadditions.capture_struggle", InputConstants.Type.KEYSYM, InputConstants.KEY_R, "key.categories.mageadditions");
     private static final KeyMapping OPEN_SPELL_CONFIG = new KeyMapping(
         "key.mageadditions.open_spell_config",
         InputConstants.Type.KEYSYM,
@@ -27,10 +29,13 @@ public final class ClientMinigameEvents {
     public static void registerKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(OPEN_MINIGAME_MENU);
         event.register(OPEN_SPELL_CONFIG);
+        event.register(STRUGGLE);
     }
 
     public static void onClientTick(ClientTickEvent.Post event) {
         Minecraft minecraft = Minecraft.getInstance();
+
+        while (STRUGGLE.consumeClick()) { if (minecraft.player != null && minecraft.getConnection() != null) PacketDistributor.sendToServer(CaptureStrugglePayload.INSTANCE); }
 
         while (OPEN_MINIGAME_MENU.consumeClick()) {
             if (minecraft.player != null && minecraft.getConnection() != null && minecraft.screen == null) {
