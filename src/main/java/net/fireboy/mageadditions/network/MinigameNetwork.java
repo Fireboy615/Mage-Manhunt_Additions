@@ -1,6 +1,8 @@
 package net.fireboy.mageadditions.network;
 
 import net.fireboy.mageadditions.network.payload.AdminAssignTeamPayload;
+import net.fireboy.mageadditions.network.payload.CaptureStatePayload;
+import net.fireboy.mageadditions.network.payload.CaptureTargetPayload;
 import net.fireboy.mageadditions.network.payload.CaptureStrugglePayload;
 import net.fireboy.mageadditions.network.payload.DeleteEquipmentPresetPayload;
 import net.fireboy.mageadditions.network.payload.EquipmentPresetListPayload;
@@ -16,6 +18,7 @@ import net.fireboy.mageadditions.network.payload.OpenMatchControlPayload;
 import net.fireboy.mageadditions.network.payload.ContinueMinigamePayload;
 import net.fireboy.mageadditions.network.payload.LaunchMinigamePayload;
 import net.fireboy.mageadditions.network.payload.LobbyStatePayload;
+import net.fireboy.mageadditions.network.payload.MirrorMovementInputPayload;
 import net.fireboy.mageadditions.network.payload.OpenMinigameMenuPayload;
 import net.fireboy.mageadditions.network.payload.OpenMinigameMenuRequestPayload;
 import net.fireboy.mageadditions.network.payload.OpenTeamSelectionPayload;
@@ -33,6 +36,13 @@ public final class MinigameNetwork {
 
         registrar.playToServer(CaptureStrugglePayload.TYPE, CaptureStrugglePayload.STREAM_CODEC, (payload, context) -> {
             if (context.player() instanceof net.minecraft.server.level.ServerPlayer player) context.enqueueWork(() -> net.fireboy.mageadditions.spell.CaptureManager.struggle(player));
+        });
+        registrar.playToServer(MirrorMovementInputPayload.TYPE, MirrorMovementInputPayload.STREAM_CODEC, (payload, context) -> {
+            if (context.player() instanceof net.minecraft.server.level.ServerPlayer player) {
+                context.enqueueWork(() -> net.fireboy.mageadditions.spell.MirrorImageManager.updateMovementInput(
+                        player, payload.forward(), payload.strafe()
+                ));
+            }
         });
 
         registrar.playToServer(
@@ -107,6 +117,16 @@ public final class MinigameNetwork {
                 MinigameServerPayloadHandler::handle
         );
 
+        registrar.playToClient(
+                CaptureStatePayload.TYPE,
+                CaptureStatePayload.STREAM_CODEC,
+                MinigameClientPayloadHandler::handle
+        );
+        registrar.playToClient(
+                CaptureTargetPayload.TYPE,
+                CaptureTargetPayload.STREAM_CODEC,
+                MinigameClientPayloadHandler::handle
+        );
         registrar.playToClient(
                 OpenMinigameMenuPayload.TYPE,
                 OpenMinigameMenuPayload.STREAM_CODEC,

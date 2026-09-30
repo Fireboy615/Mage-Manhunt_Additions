@@ -19,7 +19,7 @@ public abstract class FeatherFlightFallDamageMixin {
             CallbackInfoReturnable<Boolean> cir
     ) {
         LivingEntity self = (LivingEntity) (Object) this;
-        if (FeatherFlightRework.isActive(self)) {
+        if (FeatherFlightRework.fallDamageImmunity() && FeatherFlightRework.isActive(self)) {
             self.resetFallDistance();
             cir.setReturnValue(false);
         }

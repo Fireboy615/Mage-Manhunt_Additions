@@ -11,10 +11,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /** Client-side movement feel for the Feather Flight rework. */
 @Mixin(LocalPlayer.class)
 public abstract class LocalPlayerFeatherFlightMixin {
-    private static final double DESCENT_CAP_WHILE_JUMPING = -0.115D;
-    private static final double AIR_ACCELERATION = 0.018D;
-    private static final double MAX_HORIZONTAL_SPEED = 0.48D;
-
     @Inject(method = "aiStep", at = @At("TAIL"))
     private void mageadditions$featherFlightMovement(CallbackInfo ci) {
         LocalPlayer player = (LocalPlayer) (Object) this;
@@ -29,8 +25,9 @@ public abstract class LocalPlayerFeatherFlightMixin {
 
         // Holding jump turns a normal fall into a controlled feather descent.
         // Releasing jump immediately restores normal gravity/fall speed.
-        if (player.input.jumping && y < DESCENT_CAP_WHILE_JUMPING) {
-            y = DESCENT_CAP_WHILE_JUMPING;
+        double descentCap = -FeatherFlightRework.slowFallSpeed();
+        if (player.input.jumping && y < descentCap) {
+            y = descentCap;
             player.resetFallDistance();
         }
 
@@ -47,12 +44,13 @@ public abstract class LocalPlayerFeatherFlightMixin {
             double yaw = Math.toRadians(player.getYRot());
             double sin = Math.sin(yaw);
             double cos = Math.cos(yaw);
-            x += (strafe * cos - forward * sin) * AIR_ACCELERATION;
-            z += (forward * cos + strafe * sin) * AIR_ACCELERATION;
+            x += (strafe * cos - forward * sin) * FeatherFlightRework.airAcceleration();
+            z += (forward * cos + strafe * sin) * FeatherFlightRework.airAcceleration();
 
             double horizontal = Math.sqrt(x * x + z * z);
-            if (horizontal > MAX_HORIZONTAL_SPEED) {
-                double scale = MAX_HORIZONTAL_SPEED / horizontal;
+            double maxHorizontalSpeed = FeatherFlightRework.maxHorizontalSpeed();
+            if (horizontal > maxHorizontalSpeed) {
+                double scale = maxHorizontalSpeed / horizontal;
                 x *= scale;
                 z *= scale;
             }

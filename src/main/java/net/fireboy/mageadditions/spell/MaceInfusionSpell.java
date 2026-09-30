@@ -28,16 +28,16 @@ public final class MaceInfusionSpell extends AbstractSpell {
         ResourceLocation.fromNamespaceAndPath(MageAdditions.MODID, "mace_infusion");
 
     private final DefaultConfig defaultConfig = new DefaultConfig()
-        .setMinRarity(SpellRarity.RARE)
+        .setMinRarity(SpellRarity.LEGENDARY)
         .setSchoolResource(SchoolRegistry.ENDER_RESOURCE)
-        .setMaxLevel(5)
+        .setMaxLevel(1)
         .setCooldownSeconds(30)
         .build();
 
     public MaceInfusionSpell() {
-        this.baseManaCost = 40;
+        this.baseManaCost = 200;
         this.manaCostPerLevel = 10;
-        this.castTime = 20;
+        this.castTime = 40;
     }
 
     @Override

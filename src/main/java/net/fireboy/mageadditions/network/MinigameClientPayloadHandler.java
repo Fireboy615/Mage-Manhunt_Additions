@@ -4,9 +4,12 @@ import net.fireboy.mageadditions.client.screen.HowToPlayScreen;
 import net.fireboy.mageadditions.client.screen.MatchControlScreen;
 import net.fireboy.mageadditions.client.screen.MinigameSetupScreen;
 import net.fireboy.mageadditions.client.screen.TeamSelectionScreen;
+import net.fireboy.mageadditions.client.state.ClientCaptureState;
 import net.fireboy.mageadditions.client.state.ClientMinigameState;
 import net.fireboy.mageadditions.minigame.MinigameDefinition;
 import net.fireboy.mageadditions.minigame.MinigameRegistry;
+import net.fireboy.mageadditions.network.payload.CaptureStatePayload;
+import net.fireboy.mageadditions.network.payload.CaptureTargetPayload;
 import net.fireboy.mageadditions.network.payload.CloseTeamSelectionPayload;
 import net.fireboy.mageadditions.network.payload.EquipmentPresetListPayload;
 import net.fireboy.mageadditions.network.payload.LobbyStatePayload;
@@ -19,6 +22,15 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 public final class MinigameClientPayloadHandler {
     private MinigameClientPayloadHandler() {}
+
+
+    public static void handle(CaptureStatePayload payload, IPayloadContext context) {
+        context.enqueueWork(() -> ClientCaptureState.setCaptured(payload.captured()));
+    }
+
+    public static void handle(CaptureTargetPayload payload, IPayloadContext context) {
+        context.enqueueWork(() -> ClientCaptureState.setSelectedTarget(payload.entityId()));
+    }
 
     public static void handle(OpenMinigameMenuPayload payload, IPayloadContext context) {
         context.enqueueWork(() -> Minecraft.getInstance().setScreen(new MinigameSetupScreen()));

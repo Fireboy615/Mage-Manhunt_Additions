@@ -1,5 +1,6 @@
 package net.fireboy.mageadditions.spell;
 
+import io.redspace.ironsspellbooks.api.events.SpellOnCastEvent;
 import io.redspace.ironsspellbooks.api.magic.MagicData;
 import io.redspace.ironsspellbooks.api.registry.SpellRegistry;
 import io.redspace.ironsspellbooks.api.spells.AbstractSpell;
@@ -7,9 +8,12 @@ import net.fireboy.mageadditions.config.CastTimeOverrides;
 import net.fireboy.mageadditions.mixin.MobEffectInstanceAccessor;
 import net.fireboy.mageadditions.network.payload.ProjectileBouncePayload;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Holder;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.effect.MobEffect;
+import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.projectile.Projectile;
@@ -43,6 +47,8 @@ import java.util.concurrent.ConcurrentHashMap;
 /** Runtime support for generic capability-driven spell behaviour overrides. */
 public final class GenericSpellOverrideServerEvents {
     private static final Map<UUID, String> SOURCE_SPELLS = new ConcurrentHashMap<>();
+    private static final Map<UUID, RecentCast> RECENT_CASTS = new ConcurrentHashMap<>();
+    private static final List<PendingEffectDuration> PENDING_EFFECT_DURATIONS = new ArrayList<>();
     private static final Map<UUID, PendingKnockback> PENDING_KNOCKBACK = new ConcurrentHashMap<>();
     private static final double MIN_KNOCKBACK_VECTOR_SQR = 1.0E-5D;
     private static final double FALLBACK_KNOCKBACK_STRENGTH = 0.4D;
@@ -243,19 +249,69 @@ public final class GenericSpellOverrideServerEvents {
         PENDING_KNOCKBACK.remove(targetId, pending);
     }
 
+    /**
+     * Iron's fires this immediately before {@code AbstractSpell#onCast}. Some
+     * self-buff spells then add their MobEffectInstance without an effect source,
+     * which means MobEffectEvent.Added cannot otherwise identify the originating
+     * spell. Keep an exact-tick cast context so duration overrides remain
+     * consistent for every spell level without catching unrelated potion effects.
+     */
+    public static void onSpellCast(SpellOnCastEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        MinecraftServer server = player.getServer();
+        if (server == null) return;
+
+        AbstractSpell spell = SpellRegistry.getSpell(event.getSpellId());
+        if (spell == null || spell == SpellRegistry.none()) return;
+
+        // Only keep cast context for spells that actually have an enabled
+        // duration override. This makes the fallback precise while avoiding any
+        // reliance on structural capability detection for direct self buffs.
+        if (!CastTimeOverrides.behavior(spell).effectDurationOverride().enabled()) return;
+        RECENT_CASTS.put(player.getUUID(), new RecentCast(spell, server.getTickCount()));
+    }
+
     public static void onEffectAdded(MobEffectEvent.Added event) {
         if (event.getEntity().level().isClientSide()) return;
+
         AbstractSpell spell = spellFromSource(event.getEffectSource());
-        if (spell == null || !SpellCapabilities.detect(spell).effectDuration()) return;
-        int original = event.getEffectInstance().getDuration();
-        int resolved = CastTimeOverrides.resolveEffectDurationTicks(spell, original);
-        if (resolved != original) {
-            ((MobEffectInstanceAccessor) (Object) event.getEffectInstance()).mageadditions$setDuration(resolved);
+        if (spell == null && event.getEntity() instanceof ServerPlayer player) {
+            // Iron's direct self-buffs (Charge is the important example) call
+            // addEffect(instance) with a null source. SpellOnCastEvent fires
+            // immediately before onCast(), so the caster itself is the reliable
+            // fallback attribution for those effects.
+            spell = recentCastSpell(player);
         }
+        if (spell == null) return;
+
+        // The override being enabled is the authority here. Capability detection
+        // is only a UI hint and can miss addon/direct-effect implementations; it
+        // must not prevent a saved override from actually running.
+        if (!CastTimeOverrides.behavior(spell).effectDurationOverride().enabled()) return;
+
+        MobEffectInstance incoming = event.getEffectInstance();
+        int original = incoming.getDuration();
+        int resolved = CastTimeOverrides.resolveEffectDurationTicks(spell, original);
+        if (resolved == original) return;
+
+        // NeoForge fires MobEffectEvent.Added before LivingEntity inserts/merges
+        // the incoming instance, so this fixes brand-new effects immediately.
+        ((MobEffectInstanceAccessor) (Object) incoming).mageadditions$setDuration(resolved);
+
+        // If the entity already has the same effect, LivingEntity may merge the
+        // incoming instance into the existing one after this event returns. Queue
+        // a server-tick-post correction so the final active instance is forced to
+        // the configured duration as well.
+        PENDING_EFFECT_DURATIONS.add(new PendingEffectDuration(
+                event.getEntity(), incoming.getEffect(), spell.getSpellId(), resolved
+        ));
     }
 
     public static void onServerTickPost(ServerTickEvent.Post event) {
         MinecraftServer server = event.getServer();
+        int staleBefore = server.getTickCount() - 1;
+        RECENT_CASTS.entrySet().removeIf(entry -> entry.getValue().serverTick() < staleBefore);
+        processPendingEffectDurations();
         processPendingKnockbackFallbacks();
         updateFollowCursor(server);
         processPendingClouds(server);
@@ -741,6 +797,41 @@ public final class GenericSpellOverrideServerEvents {
         AbstractSpell spell = SpellRegistry.getSpell(id);
         return spell == null || spell == SpellRegistry.none() ? null : spell;
     }
+
+    private static AbstractSpell recentCastSpell(ServerPlayer player) {
+        MinecraftServer server = player.getServer();
+        if (server == null) return null;
+        RecentCast recent = RECENT_CASTS.get(player.getUUID());
+        if (recent == null || recent.serverTick() != server.getTickCount()) return null;
+        return recent.spell();
+    }
+
+    private static void processPendingEffectDurations() {
+        if (PENDING_EFFECT_DURATIONS.isEmpty()) return;
+
+        Iterator<PendingEffectDuration> iterator = PENDING_EFFECT_DURATIONS.iterator();
+        while (iterator.hasNext()) {
+            PendingEffectDuration pending = iterator.next();
+            LivingEntity target = pending.target();
+            if (!target.isRemoved() && !target.level().isClientSide()) {
+                MobEffectInstance active = target.getEffect(pending.effect());
+                if (active != null && active.getDuration() != pending.durationTicks()) {
+                    ((MobEffectInstanceAccessor) (Object) active)
+                            .mageadditions$setDuration(pending.durationTicks());
+                }
+            }
+            iterator.remove();
+        }
+    }
+
+    private record RecentCast(AbstractSpell spell, int serverTick) {}
+
+    private record PendingEffectDuration(
+            LivingEntity target,
+            Holder<MobEffect> effect,
+            String spellId,
+            int durationTicks
+    ) {}
 
     private record PendingKnockback(
             String spellId,

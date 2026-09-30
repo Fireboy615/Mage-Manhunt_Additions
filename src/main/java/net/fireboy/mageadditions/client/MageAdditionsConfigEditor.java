@@ -7,7 +7,9 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.fireboy.mageadditions.config.CastTimeConfig;
 import net.fireboy.mageadditions.config.CastTimeOverrides;
+import net.fireboy.mageadditions.config.ArrowVolleyConfig;
 import net.fireboy.mageadditions.config.CounterspellConfig;
+import net.fireboy.mageadditions.config.FeatherFlightConfig;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -98,6 +100,76 @@ public final class MageAdditionsConfigEditor {
         }
     }
 
+    public static ArrowVolleyConfig readArrowVolley() {
+        try {
+            Document document = readDocument();
+            ArrowVolleyConfig raw = document.root.has("spell_reworks")
+                    && document.config.spell_reworks != null
+                    ? document.config.spell_reworks.arrow_volley
+                    : null;
+            return copyArrowVolley(raw == null ? new ArrowVolleyConfig() : raw);
+        } catch (Exception ignored) {
+            return new ArrowVolleyConfig();
+        }
+    }
+
+    public static CastTimeOverrides.ReloadResult saveArrowVolley(ArrowVolleyConfig arrowVolley) {
+        try {
+            Document document = readDocument();
+            CastTimeConfig.SpellReworks reworks;
+
+            if (document.root.has("spell_reworks") && document.config.spell_reworks != null) {
+                reworks = document.config.spell_reworks;
+            } else {
+                reworks = new CastTimeConfig.SpellReworks();
+                if (document.config.counterspell != null) {
+                    reworks.counterspell = copyCounterspell(document.config.counterspell);
+                }
+            }
+
+            reworks.arrow_volley = copyArrowVolley(arrowVolley);
+            writeTopLevelObject(document.raw, "spell_reworks", GSON.toJson(reworks));
+            return CastTimeOverrides.reload();
+        } catch (Exception exception) {
+            return failure(exception);
+        }
+    }
+
+    public static FeatherFlightConfig readFeatherFlight() {
+        try {
+            Document document = readDocument();
+            FeatherFlightConfig raw = document.root.has("spell_reworks")
+                    && document.config.spell_reworks != null
+                    ? document.config.spell_reworks.feather_flight
+                    : null;
+            return copyFeatherFlight(raw == null ? new FeatherFlightConfig() : raw);
+        } catch (Exception ignored) {
+            return new FeatherFlightConfig();
+        }
+    }
+
+    public static CastTimeOverrides.ReloadResult saveFeatherFlight(FeatherFlightConfig featherFlight) {
+        try {
+            Document document = readDocument();
+            CastTimeConfig.SpellReworks reworks;
+
+            if (document.root.has("spell_reworks") && document.config.spell_reworks != null) {
+                reworks = document.config.spell_reworks;
+            } else {
+                reworks = new CastTimeConfig.SpellReworks();
+                if (document.config.counterspell != null) {
+                    reworks.counterspell = copyCounterspell(document.config.counterspell);
+                }
+            }
+
+            reworks.feather_flight = copyFeatherFlight(featherFlight);
+            writeTopLevelObject(document.raw, "spell_reworks", GSON.toJson(reworks));
+            return CastTimeOverrides.reload();
+        } catch (Exception exception) {
+            return failure(exception);
+        }
+    }
+
     private static Document readDocument() throws Exception {
         Path path = CastTimeOverrides.configPath();
         if (Files.notExists(path)) {
@@ -179,6 +251,30 @@ public final class MageAdditionsConfigEditor {
         copy.require_line_of_sight = source.require_line_of_sight;
         copy.target_mode = source.target_mode;
         copy.debug_particles = source.debug_particles;
+        return copy;
+    }
+
+    private static ArrowVolleyConfig copyArrowVolley(ArrowVolleyConfig source) {
+        ArrowVolleyConfig copy = new ArrowVolleyConfig();
+        copy.enabled = source.enabled;
+        copy.cone_angle_degrees = source.cone_angle_degrees;
+        copy.projectile_speed = source.projectile_speed;
+        copy.damage_per_level = source.damage_per_level;
+        copy.max_hits_per_target = source.max_hits_per_target;
+        copy.close_range_distance = source.close_range_distance;
+        copy.close_range_damage_multiplier = source.close_range_damage_multiplier;
+        copy.full_damage_distance = source.full_damage_distance;
+        return copy;
+    }
+
+    private static FeatherFlightConfig copyFeatherFlight(FeatherFlightConfig source) {
+        FeatherFlightConfig copy = new FeatherFlightConfig();
+        copy.enabled = source.enabled;
+        copy.slow_fall_speed = source.slow_fall_speed;
+        copy.air_acceleration = source.air_acceleration;
+        copy.max_horizontal_speed = source.max_horizontal_speed;
+        copy.extra_jump_strength = source.extra_jump_strength;
+        copy.fall_damage_immunity = source.fall_damage_immunity;
         return copy;
     }
 

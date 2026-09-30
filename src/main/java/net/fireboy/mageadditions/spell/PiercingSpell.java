@@ -30,7 +30,7 @@ public final class PiercingSpell extends AbstractSpell {
     private final DefaultConfig defaultConfig = new DefaultConfig()
         .setMinRarity(SpellRarity.RARE)
         .setSchoolResource(SchoolRegistry.ENDER_RESOURCE)
-        .setMaxLevel(5)
+        .setMaxLevel(3)
         .setCooldownSeconds(30)
         .build();
 

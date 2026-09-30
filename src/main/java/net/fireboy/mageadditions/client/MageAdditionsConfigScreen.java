@@ -131,13 +131,22 @@ public final class MageAdditionsConfigScreen extends Screen {
                             }
                         }).bounds(left, y, width, CONTROL_HEIGHT).build()
                 );
-                case SPELL_REWORKS -> this.addRenderableWidget(
-                        Button.builder(Component.literal("Open Counterspell Rework"), button -> {
-                            if (this.minecraft != null) {
-                                this.minecraft.setScreen(new CounterspellEditorScreen(this));
-                            }
-                        }).bounds(left, y, width, CONTROL_HEIGHT).build()
-                );
+                case SPELL_REWORKS -> {
+                    int reworkY = y;
+                    for (ReworkEditorRegistry.Entry entry : ReworkEditorRegistry.entries()) {
+                        this.addRenderableWidget(
+                                Button.builder(
+                                        Component.literal("Open " + entry.displayName() + " Rework"),
+                                        button -> {
+                                            if (this.minecraft != null) {
+                                                this.minecraft.setScreen(entry.createScreen(this));
+                                            }
+                                        }
+                                ).bounds(left, reworkY, width, CONTROL_HEIGHT).build()
+                        );
+                        reworkY += 30;
+                    }
+                }
                 case CUSTOM_SPELLS -> this.addRenderableWidget(
                         Button.builder(Component.literal("Open Custom Spell Manager"), button -> {
                             if (this.minecraft != null) {
@@ -149,6 +158,10 @@ public final class MageAdditionsConfigScreen extends Screen {
                             }
                         }).bounds(left, y, width, CONTROL_HEIGHT).build()
                 );
+                case LOOT_CHANGES -> {
+                    // This module only needs its master switch. The supplied
+                    // loot-table pack is applied automatically on resource load.
+                }
                 case EXPERIMENTAL -> {
                     // Reserved for future opt-in testing controls.
                 }
@@ -177,6 +190,18 @@ public final class MageAdditionsConfigScreen extends Screen {
             } else {
                 this.status = Component.literal(this.enabled ? "Enabled." : "Disabled.")
                         .withStyle(this.enabled ? ChatFormatting.GREEN : ChatFormatting.YELLOW);
+
+                if (this.tab == ModuleTab.LOOT_CHANGES
+                        && this.minecraft != null
+                        && this.minecraft.hasSingleplayerServer()
+                        && this.minecraft.getSingleplayerServer() != null) {
+                    var server = this.minecraft.getSingleplayerServer();
+                    server.execute(() -> server.reloadResources(server.getPackRepository().getSelectedIds()));
+                    this.status = Component.literal(
+                                    (this.enabled ? "Enabled." : "Disabled.") + " Reloading loot tables..."
+                            )
+                            .withStyle(this.enabled ? ChatFormatting.GREEN : ChatFormatting.YELLOW);
+                }
             }
 
             if (this.enabledButton != null) {
@@ -208,6 +233,9 @@ public final class MageAdditionsConfigScreen extends Screen {
                 case CUSTOM_SPELLS -> Component.literal(
                         "Mage Additions custom spells. Open the manager to configure Piercing, Mace Infusion, Mirror Image, and future custom spells."
                 );
+                case LOOT_CHANGES -> Component.literal(
+                        "Uses the custom Iron's loot tables for bookshelves, magic treasure, mage drops, curios, ink, and pyromancer supplies."
+                );
                 case EXPERIMENTAL -> Component.literal(
                         "Opt-in testing features that are kept separate from normal balance and rework settings."
                 );
@@ -218,7 +246,9 @@ public final class MageAdditionsConfigScreen extends Screen {
                         this.font,
                         description.copy().withStyle(ChatFormatting.GRAY),
                         Math.max(12, this.width / 2 - 150),
-                        136,
+                        this.tab == ModuleTab.SPELL_REWORKS
+                                ? 110 + ReworkEditorRegistry.entries().size() * 30
+                                : 136,
                         Math.min(300, this.width - 24),
                         0xFFFFFF
                 );
@@ -273,6 +303,7 @@ public final class MageAdditionsConfigScreen extends Screen {
                         enabled,
                         states.spellReworks(),
                         states.customSpells(),
+                        states.lootChanges(),
                         states.experimental()
                 );
             }
@@ -289,6 +320,7 @@ public final class MageAdditionsConfigScreen extends Screen {
                         states.balanceTweaks(),
                         enabled,
                         states.customSpells(),
+                        states.lootChanges(),
                         states.experimental()
                 );
             }
@@ -304,6 +336,24 @@ public final class MageAdditionsConfigScreen extends Screen {
                 return new CastTimeOverrides.ModuleStates(
                         states.balanceTweaks(),
                         states.spellReworks(),
+                        enabled,
+                        states.lootChanges(),
+                        states.experimental()
+                );
+            }
+        },
+        LOOT_CHANGES("Loot Changes") {
+            @Override
+            boolean enabled(CastTimeOverrides.ModuleStates states) {
+                return states.lootChanges();
+            }
+
+            @Override
+            CastTimeOverrides.ModuleStates withEnabled(CastTimeOverrides.ModuleStates states, boolean enabled) {
+                return new CastTimeOverrides.ModuleStates(
+                        states.balanceTweaks(),
+                        states.spellReworks(),
+                        states.customSpells(),
                         enabled,
                         states.experimental()
                 );
@@ -321,6 +371,7 @@ public final class MageAdditionsConfigScreen extends Screen {
                         states.balanceTweaks(),
                         states.spellReworks(),
                         states.customSpells(),
+                        states.lootChanges(),
                         enabled
                 );
             }

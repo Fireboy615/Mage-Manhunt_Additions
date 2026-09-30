@@ -1,6 +1,7 @@
 package net.fireboy.mageadditions.spell;
 
 import com.mojang.authlib.GameProfile;
+import com.mojang.datafixers.util.Pair;
 import io.netty.channel.embedded.EmbeddedChannel;
 import net.fireboy.mageadditions.MageAdditions;
 import net.fireboy.mageadditions.mixin.ConnectionAccessor;
@@ -9,6 +10,9 @@ import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.game.ClientboundAnimatePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -20,6 +24,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.player.PlayerModelPart;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
@@ -45,15 +50,15 @@ import java.util.UUID;
  *
  * <p>Each image is a NeoForge fake server player so normal clients render a real
  * player model with the caster's skin and copied equipment. All images begin
- * directly on top of the caster, then mirror the caster's movement through normal
- * Minecraft collision. Each image keeps a small random yaw offset of up to 45
- * degrees left or right, so the group fans out naturally instead of staying
- * perfectly stacked. They mirror the caster's visible actions and poof on their
- * first hit.</p>
+ * directly on top of the caster. Each image receives one permanent random Y-axis
+ * transform. The caster's horizontal movement and look direction are both rotated
+ * through that same transform, so every image behaves like a rotated copy of the
+ * caster rather than separately patched movement/head states. Images use normal
+ * block collision and independently simulated gravity, mirror visible actions, and
+ * poof on their first hit.</p>
  */
 public final class MirrorImageManager {
     private static final RandomSource RANDOM = RandomSource.create();
-    private static final float MAX_CLONE_YAW_OFFSET = 45.0F;
 
     /**
      * NeoForge FakePlayers share a dummy Connection whose Netty channel is null by
@@ -64,12 +69,32 @@ public final class MirrorImageManager {
     private static final EmbeddedChannel FAKE_PLAYER_CHANNEL = new EmbeddedChannel();
     private static final Map<UUID, CloneState> CLONES = new HashMap<>();
     private static final Map<UUID, Set<UUID>> OWNER_TO_CLONES = new HashMap<>();
+    private static final Map<UUID, MovementInput> OWNER_INPUTS = new HashMap<>();
 
     private MirrorImageManager() {}
+
+    /**
+     * Receives the caster's actual movement keys from their client. Vanilla player
+     * movement packets only contain the resulting position, so once the real player
+     * is pressed against a wall the server otherwise cannot tell the difference
+     * between "holding W into the wall" and "not trying to move".
+     */
+    public static void updateMovementInput(ServerPlayer owner, float forward, float strafe) {
+        UUID ownerId = owner.getUUID();
+        if (!OWNER_TO_CLONES.containsKey(ownerId)) {
+            OWNER_INPUTS.remove(ownerId);
+            return;
+        }
+
+        float clampedForward = Mth.clamp(forward, -1.0F, 1.0F);
+        float clampedStrafe = Mth.clamp(strafe, -1.0F, 1.0F);
+        OWNER_INPUTS.put(ownerId, new MovementInput(clampedForward, clampedStrafe));
+    }
 
     public static void createMirrorImage(ServerLevel level, ServerPlayer owner, int spellLevel) {
         MinecraftServer server = level.getServer();
         removeExistingClones(owner.getUUID(), server, false);
+        OWNER_INPUTS.remove(owner.getUUID());
 
         int effectiveLevel = Math.max(1, spellLevel);
         int cloneCount = effectiveLevel + 2; // I=3, II=4, III=5, then +1 per extra level.
@@ -81,19 +106,24 @@ public final class MirrorImageManager {
             GameProfile profile = new GameProfile(UUID.randomUUID(), owner.getGameProfile().getName());
             profile.getProperties().putAll(owner.getGameProfile().getProperties());
 
-            float yawOffset = randomYawOffset();
+            // One transform controls BOTH movement and facing for the entire life of
+            // this image. This is the core illusion: the clone is simply the owner's
+            // actions rotated into a different world direction.
+            float transformYaw = randomTransformYaw();
 
             MirrorClonePlayer clone = new MirrorClonePlayer(level, profile, owner.getUUID());
             initializeFakeConnection(clone);
             configureClonePhysics(clone);
+            float initialCloneYaw = Mth.wrapDegrees(owner.getYRot() + transformYaw);
+            float initialClonePitch = owner.getXRot();
             clone.moveTo(
                     owner.getX(),
                     owner.getY(),
                     owner.getZ(),
-                    Mth.wrapDegrees(owner.getYRot() + yawOffset),
-                    owner.getXRot()
+                    initialCloneYaw,
+                    initialClonePitch
             );
-            syncVisibleState(owner, clone, yawOffset);
+            clone.setOnGround(owner.onGround());
 
             sendCloneProfile(server, clone);
             level.addNewPlayer(clone);
@@ -106,13 +136,16 @@ public final class MirrorImageManager {
                 );
                 continue;
             }
+            syncVisibleState(owner, clone, transformYaw);
+            broadcastFullEquipment(clone);
 
             CloneState state = new CloneState(
                     owner.getUUID(),
                     clone,
                     expiresAtTick,
                     owner.position(),
-                    yawOffset
+                    owner.onGround(),
+                    transformYaw
             );
             CLONES.put(clone.getUUID(), state);
             ownerClones.add(clone.getUUID());
@@ -161,15 +194,23 @@ public final class MirrorImageManager {
 
             configureClonePhysics(state.clone);
 
-            // Copy the real player's displacement through normal collision, but
-            // rotate the horizontal part by this clone's persistent yaw offset.
-            // Because every image starts on the caster, this makes them fan out
-            // naturally while still performing the same movement pattern.
+            // Treat the image as one rotated copy of the caster. Horizontal movement
+            // comes from the caster's INPUT when movement keys are held, rather than
+            // only the caster's resulting position. That lets an image keep walking
+            // through its own open path even while the real player is holding forward
+            // into a wall. If there is no movement input, copy real displacement so
+            // external movement such as knockback can still be mirrored.
             Vec3 ownerPosition = owner.position();
             Vec3 movement = ownerPosition.subtract(state.lastOwnerPosition);
-            syncVisibleState(owner, state.clone, state.yawOffset);
-            moveCloneLikeOwner(state.clone, rotateHorizontal(movement, state.yawOffset));
+            Vec3 ownerHorizontalMovement = resolveOwnerHorizontalMovement(owner, state, movement);
+            Vec3 horizontalMovement = rotateHorizontal(
+                    ownerHorizontalMovement,
+                    state.transformYaw
+            );
+            moveCloneWithPhysics(owner, state, horizontalMovement, movement.y);
+            syncVisibleState(owner, state.clone, state.transformYaw);
             state.lastOwnerPosition = ownerPosition;
+            state.lastOwnerOnGround = owner.onGround();
 
             // Autonomous fake-casting remains disabled: independent aiming/casting
             // would immediately reveal which member is not the real player.
@@ -183,6 +224,7 @@ public final class MirrorImageManager {
     public static void onServerStopped(ServerStoppedEvent event) {
         CLONES.clear();
         OWNER_TO_CLONES.clear();
+        OWNER_INPUTS.clear();
     }
 
     private static void initializeFakeConnection(MirrorClonePlayer clone) {
@@ -195,33 +237,142 @@ public final class MirrorImageManager {
     }
 
     private static void configureClonePhysics(MirrorClonePlayer clone) {
-        // Clones should collide with terrain exactly like a normal player. Gravity
-        // stays disabled because their vertical displacement is copied from the real
-        // player along with horizontal movement; applying a second gravity step would
-        // make their motion diverge for reasons unrelated to the player's movement.
+        // Clones collide with terrain. Gravity itself is integrated manually in the
+        // server tick because fake ServerPlayers do not receive client movement
+        // packets and therefore do not run normal player travel physics.
         clone.noPhysics = false;
-        clone.setNoGravity(true);
-        clone.setDeltaMovement(Vec3.ZERO);
-        clone.fallDistance = 0.0F;
+        clone.setNoGravity(false);
     }
 
-    private static void moveCloneLikeOwner(MirrorClonePlayer clone, Vec3 movement) {
-        if (movement.lengthSqr() < 1.0E-8D) {
-            return;
+    private static Vec3 resolveOwnerHorizontalMovement(
+            ServerPlayer owner,
+            CloneState state,
+            Vec3 actualMovement
+    ) {
+        MovementInput input = OWNER_INPUTS.get(owner.getUUID());
+        Vec3 actualHorizontal = new Vec3(actualMovement.x, 0.0D, actualMovement.z);
+
+        if (input == null || !input.isMoving()) {
+            return actualHorizontal;
         }
-        clone.move(MoverType.SELF, movement);
-        clone.setDeltaMovement(Vec3.ZERO);
-        clone.fallDistance = 0.0F;
+
+        double actualSpeed = actualHorizontal.horizontalDistance();
+        if (actualSpeed > 1.0E-4D && !owner.horizontalCollision) {
+            // Learn the real current movement speed whenever the owner has room to
+            // move. This preserves sprinting, speed effects, slow terrain, etc. and
+            // gives us a good speed to continue using when the owner hits a wall.
+            state.lastObservedHorizontalSpeed = actualSpeed;
+        }
+
+        double speed = Math.max(state.lastObservedHorizontalSpeed, owner.getSpeed());
+        if (owner.isShiftKeyDown()) {
+            speed *= 0.30D;
+        }
+        speed = Math.max(0.02D, speed);
+
+        // Convert the caster's local W/A/S/D intent into world movement using their
+        // CURRENT yaw. Movement and facing then receive the same clone transform.
+        double forward = input.forward;
+        double strafe = input.strafe;
+        double length = Math.sqrt(forward * forward + strafe * strafe);
+        if (length > 1.0D) {
+            forward /= length;
+            strafe /= length;
+        }
+
+        double radians = Math.toRadians(owner.getYRot());
+        double sin = Math.sin(radians);
+        double cos = Math.cos(radians);
+
+        // Minecraft yaw 0 faces +Z. Positive strafe means right.
+        double x = (-sin * forward + cos * strafe) * speed;
+        double z = ( cos * forward + sin * strafe) * speed;
+        return new Vec3(x, 0.0D, z);
     }
 
-    private static void syncVisibleState(ServerPlayer owner, MirrorClonePlayer clone, float yawOffset) {
-        copySlotIfChanged(owner, clone, EquipmentSlot.HEAD);
-        copySlotIfChanged(owner, clone, EquipmentSlot.CHEST);
-        copySlotIfChanged(owner, clone, EquipmentSlot.LEGS);
-        copySlotIfChanged(owner, clone, EquipmentSlot.FEET);
-        copySlotIfChanged(owner, clone, EquipmentSlot.MAINHAND);
-        copySlotIfChanged(owner, clone, EquipmentSlot.OFFHAND);
+    private static void moveCloneWithPhysics(
+            ServerPlayer owner,
+            CloneState state,
+            Vec3 horizontalMovement,
+            double ownerVerticalDisplacement
+    ) {
+        MirrorClonePlayer clone = state.clone;
+        double verticalVelocity = clone.getDeltaMovement().y;
 
+        // A jump is a discrete grounded action, not "copy positive Y motion".
+        // Detect it only when the OWNER actually transitions ground -> air with a
+        // meaningful upward impulse. Then apply it only if THIS clone is physically
+        // standing on something. This prevents the mid-air double-jumps introduced
+        // by the previous approach while still allowing grounded mirrors to jump.
+        double ownerJumpVelocity = Math.max(owner.getDeltaMovement().y, ownerVerticalDisplacement);
+        boolean ownerStartedJump = state.lastOwnerOnGround
+                && !owner.onGround()
+                && ownerJumpVelocity > 0.05D;
+        boolean cloneCanJump = clone.onGround()
+                || (clone.verticalCollision && verticalVelocity <= 0.0D);
+        if (ownerStartedJump && cloneCanJump) {
+            verticalVelocity = ownerJumpVelocity;
+            clone.hasImpulse = true;
+        } else if (owner.isSwimming() || owner.isFallFlying()) {
+            // These are continuous vertical-control states, so matching the owner's
+            // current Y velocity gives a much closer visual copy.
+            verticalVelocity = owner.getDeltaMovement().y;
+            clone.hasImpulse = true;
+        } else {
+            // Fake ServerPlayers never receive normal client movement packets, so
+            // apply gravity EVERY tick, including while grounded. The tiny downward
+            // move is what lets Entity#move continuously confirm floor collision and
+            // keep onGround stable; skipping gravity on grounded ticks made the fake
+            // player alternate between grounded/airborne and caused missed jumps.
+            verticalVelocity -= clone.getGravity();
+        }
+
+        Vec3 requestedMovement = new Vec3(
+                horizontalMovement.x,
+                verticalVelocity,
+                horizontalMovement.z
+        );
+
+        // Setting delta movement before move() lets vanilla collision handling zero
+        // blocked axes correctly. The actual position update therefore respects
+        // floors, ceilings, walls, slabs, stairs, etc.
+        clone.setDeltaMovement(requestedMovement);
+        clone.move(MoverType.SELF, requestedMovement);
+
+        double nextVerticalVelocity;
+        if (clone.verticalCollision) {
+            nextVerticalVelocity = 0.0D;
+        } else if (owner.isSwimming() || owner.isFallFlying()) {
+            nextVerticalVelocity = verticalVelocity;
+        } else {
+            // Vanilla-like air drag after movement. Horizontal velocity is not
+            // retained because horizontal displacement is copied fresh each tick.
+            nextVerticalVelocity = verticalVelocity * 0.98D;
+        }
+
+        clone.setDeltaMovement(0.0D, nextVerticalVelocity, 0.0D);
+    }
+
+    private static void syncVisibleState(
+            ServerPlayer owner,
+            MirrorClonePlayer clone,
+            float transformYaw
+    ) {
+        List<Pair<EquipmentSlot, ItemStack>> changedEquipment = new ArrayList<>();
+        copySlotIfChanged(owner, clone, EquipmentSlot.HEAD, changedEquipment);
+        copySlotIfChanged(owner, clone, EquipmentSlot.CHEST, changedEquipment);
+        copySlotIfChanged(owner, clone, EquipmentSlot.LEGS, changedEquipment);
+        copySlotIfChanged(owner, clone, EquipmentSlot.FEET, changedEquipment);
+        copySlotIfChanged(owner, clone, EquipmentSlot.MAINHAND, changedEquipment);
+        copySlotIfChanged(owner, clone, EquipmentSlot.OFFHAND, changedEquipment);
+        if (!changedEquipment.isEmpty() && !clone.isRemoved()) {
+            clone.serverLevel().getChunkSource().broadcastAndSend(
+                    clone, new ClientboundSetEquipmentPacket(clone.getId(), changedEquipment)
+            );
+        }
+
+        clone.mirrorModelParts(owner);
+        clone.setMainArm(owner.getMainArm());
         clone.setPose(owner.getPose());
         clone.setShiftKeyDown(owner.isShiftKeyDown());
         clone.setSprinting(owner.isSprinting());
@@ -235,19 +386,29 @@ public final class MirrorImageManager {
             }
         }
 
-        // Look where the real player looks, with one persistent sideways offset
-        // chosen when this image is created. Pitch is mirrored exactly.
-        float cloneYaw = Mth.wrapDegrees(owner.getYRot() + yawOffset);
-        float cloneHeadYaw = Mth.wrapDegrees(owner.getYHeadRot() + yawOffset);
+        // One permanent Y transform is applied to every owner-facing component.
+        // Because the offset never changes, an owner turn of +30 degrees is exactly
+        // a +30-degree turn for every clone, from that clone's own world heading.
+        float cloneYaw = Mth.wrapDegrees(owner.getYRot() + transformYaw);
+        float cloneHeadYaw = Mth.wrapDegrees(owner.getYHeadRot() + transformYaw);
+        float cloneBodyYaw = Mth.wrapDegrees(owner.yBodyRot + transformYaw);
+        float clonePitch = owner.getXRot();
+
         clone.setYRot(cloneYaw);
-        clone.setXRot(owner.getXRot());
+        clone.setXRot(clonePitch);
         clone.setYHeadRot(cloneHeadYaw);
-        clone.yRotO = Mth.wrapDegrees(owner.yRotO + yawOffset);
-        clone.xRotO = owner.xRotO;
-        clone.yHeadRot = Mth.wrapDegrees(owner.yHeadRot + yawOffset);
-        clone.yHeadRotO = Mth.wrapDegrees(owner.yHeadRotO + yawOffset);
-        clone.yBodyRot = Mth.wrapDegrees(owner.yBodyRot + yawOffset);
-        clone.yBodyRotO = Mth.wrapDegrees(owner.yBodyRotO + yawOffset);
+        clone.yRotO = cloneYaw;
+        clone.xRotO = clonePitch;
+        clone.yHeadRot = cloneHeadYaw;
+        clone.yHeadRotO = cloneHeadYaw;
+        clone.yBodyRot = cloneBodyYaw;
+        clone.yBodyRotO = cloneBodyYaw;
+
+        // Fake ServerPlayers do not have a real client sending movement/rotation
+        // packets. Send an absolute entity state after every physics step so the
+        // observing clients cannot normalize all fake-player heads back toward the
+        // caster's world orientation. Head yaw is a separate packet for players.
+        broadcastCloneTransform(clone, cloneHeadYaw);
 
         // Mirror blocking/eating/bow-drawing/other held-use poses without
         // actually consuming, releasing, or activating the copied item.
@@ -255,15 +416,35 @@ public final class MirrorImageManager {
         clone.mirrorSwing(owner);
     }
 
-    private static void copySlotIfChanged(ServerPlayer owner, MirrorClonePlayer clone, EquipmentSlot slot) {
+    private static void broadcastCloneTransform(MirrorClonePlayer clone, float headYaw) {
+        clone.serverLevel().getChunkSource().broadcastAndSend(
+                clone, new ClientboundTeleportEntityPacket(clone)
+        );
+        clone.serverLevel().getChunkSource().broadcastAndSend(
+                clone, new ClientboundRotateHeadPacket(clone, rotationByte(headYaw))
+        );
+    }
+
+    private static byte rotationByte(float degrees) {
+        return (byte) Mth.floor(degrees * 256.0F / 360.0F);
+    }
+
+    private static void copySlotIfChanged(
+            ServerPlayer owner,
+            MirrorClonePlayer clone,
+            EquipmentSlot slot,
+            List<Pair<EquipmentSlot, ItemStack>> changedEquipment
+    ) {
         ItemStack desired = owner.getItemBySlot(slot);
         if (!ItemStack.matches(clone.getItemBySlot(slot), desired)) {
-            clone.setItemSlot(slot, desired.copy());
+            ItemStack copy = desired.copy();
+            clone.setItemSlot(slot, copy);
+            changedEquipment.add(Pair.of(slot, copy.copy()));
         }
     }
 
-    private static float randomYawOffset() {
-        return (RANDOM.nextFloat() * 2.0F - 1.0F) * MAX_CLONE_YAW_OFFSET;
+    private static float randomTransformYaw() {
+        return RANDOM.nextFloat() * 360.0F - 180.0F;
     }
 
     private static Vec3 rotateHorizontal(Vec3 movement, float yawOffsetDegrees) {
@@ -277,6 +458,23 @@ public final class MirrorImageManager {
         double x = movement.x * cos - movement.z * sin;
         double z = movement.x * sin + movement.z * cos;
         return new Vec3(x, movement.y, z);
+    }
+
+    private static void broadcastFullEquipment(MirrorClonePlayer clone) {
+        List<Pair<EquipmentSlot, ItemStack>> equipment = new ArrayList<>();
+        for (EquipmentSlot slot : List.of(
+                EquipmentSlot.HEAD,
+                EquipmentSlot.CHEST,
+                EquipmentSlot.LEGS,
+                EquipmentSlot.FEET,
+                EquipmentSlot.MAINHAND,
+                EquipmentSlot.OFFHAND
+        )) {
+            equipment.add(Pair.of(slot, clone.getItemBySlot(slot).copy()));
+        }
+        clone.serverLevel().getChunkSource().broadcastAndSend(
+                clone, new ClientboundSetEquipmentPacket(clone.getId(), equipment)
+        );
     }
 
     private static void poof(ServerLevel level, Entity entity, int count) {
@@ -314,6 +512,7 @@ public final class MirrorImageManager {
             ownerClones.remove(cloneId);
             if (ownerClones.isEmpty()) {
                 OWNER_TO_CLONES.remove(state.ownerId);
+                OWNER_INPUTS.remove(state.ownerId);
             }
         }
 
@@ -352,21 +551,32 @@ public final class MirrorImageManager {
         final UUID ownerId;
         final MirrorClonePlayer clone;
         final int expiresAtTick;
-        final float yawOffset;
+        final float transformYaw;
         Vec3 lastOwnerPosition;
+        boolean lastOwnerOnGround;
+        double lastObservedHorizontalSpeed;
 
         CloneState(
                 UUID ownerId,
                 MirrorClonePlayer clone,
                 int expiresAtTick,
                 Vec3 lastOwnerPosition,
-                float yawOffset
+                boolean lastOwnerOnGround,
+                float transformYaw
         ) {
             this.ownerId = ownerId;
             this.clone = clone;
             this.expiresAtTick = expiresAtTick;
             this.lastOwnerPosition = lastOwnerPosition;
-            this.yawOffset = yawOffset;
+            this.lastOwnerOnGround = lastOwnerOnGround;
+            this.transformYaw = transformYaw;
+            this.lastObservedHorizontalSpeed = Math.max(0.02D, clone.getSpeed());
+        }
+    }
+
+    private record MovementInput(float forward, float strafe) {
+        boolean isMoving() {
+            return Math.abs(forward) > 1.0E-4F || Math.abs(strafe) > 1.0E-4F;
         }
     }
 
@@ -380,6 +590,18 @@ public final class MirrorImageManager {
         MirrorClonePlayer(ServerLevel level, GameProfile profile, UUID ownerId) {
             super(level, profile);
             this.ownerId = ownerId;
+        }
+
+        void mirrorModelParts(ServerPlayer owner) {
+            byte mask = 0;
+            for (PlayerModelPart part : PlayerModelPart.values()) {
+                if (owner.isModelPartShown(part)) {
+                    mask = (byte) (mask | part.getMask());
+                }
+            }
+            if (this.entityData.get(DATA_PLAYER_MODE_CUSTOMISATION) != mask) {
+                this.entityData.set(DATA_PLAYER_MODE_CUSTOMISATION, mask);
+            }
         }
 
         void mirrorItemUse(ServerPlayer owner) {
@@ -422,6 +644,29 @@ public final class MirrorImageManager {
             this.swingingArm = owner.swingingArm;
             this.swingTime = owner.swingTime;
             this.attackAnim = owner.attackAnim;
+        }
+
+        @Override
+        public void push(Entity other) {
+            if (isOwnerOrSiblingMirror(other)) {
+                return;
+            }
+            super.push(other);
+        }
+
+        @Override
+        protected void doPush(Entity other) {
+            if (isOwnerOrSiblingMirror(other)) {
+                return;
+            }
+            super.doPush(other);
+        }
+
+        private boolean isOwnerOrSiblingMirror(Entity other) {
+            if (other.getUUID().equals(ownerId)) {
+                return true;
+            }
+            return other instanceof MirrorClonePlayer mirror && mirror.ownerId.equals(this.ownerId);
         }
 
         @Override

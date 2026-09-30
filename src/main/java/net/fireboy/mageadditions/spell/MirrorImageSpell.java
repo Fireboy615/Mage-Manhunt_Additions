@@ -31,11 +31,11 @@ public final class MirrorImageSpell extends AbstractSpell {
             .setMinRarity(SpellRarity.EPIC)
             .setSchoolResource(SchoolRegistry.ENDER_RESOURCE)
             .setMaxLevel(3)
-            .setCooldownSeconds(45)
+            .setCooldownSeconds(60)
             .build();
 
     public MirrorImageSpell() {
-        this.baseManaCost = 80;
+        this.baseManaCost = 120;
         this.manaCostPerLevel = 20;
         this.castTime = 20;
     }

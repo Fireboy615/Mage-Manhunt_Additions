@@ -2,6 +2,7 @@ package net.fireboy.mageadditions.minigame;
 
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
+import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.player.AttackEntityEvent;
@@ -79,9 +80,22 @@ public final class MinigameServerEvents {
             event.setCanceled(true);
             return;
         }
+    }
+
+    /**
+     * Record scoreboard damage after Minecraft has applied armor, resistance,
+     * blocking and the rest of the damage pipeline. This represents actual
+     * health lost instead of the pre-mitigation incoming hit.
+     */
+    public static void onDamageApplied(LivingDamageEvent.Post event) {
+        if (!(event.getEntity() instanceof ServerPlayer victim) || victim.level().isClientSide) {
+            return;
+        }
+        float appliedDamage = event.getNewDamage();
+        MinigameManager.recordDamageTaken(victim, appliedDamage);
         Entity source = event.getSource().getEntity();
         if (source instanceof ServerPlayer attacker) {
-            MinigameManager.recordDamage(attacker, victim, event.getAmount());
+            MinigameManager.recordDamage(attacker, victim, appliedDamage);
         }
     }
 
@@ -94,6 +108,7 @@ public final class MinigameServerEvents {
         if (source instanceof ServerPlayer killer) {
             MinigameManager.recordKill(killer, victim);
         }
+        MinigameManager.onPlayerDeath(victim);
     }
 
     public static void onServerTick(ServerTickEvent.Post event) {

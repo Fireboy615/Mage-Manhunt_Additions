@@ -13,11 +13,14 @@
     "EntityMixin",
     "IronMagicProjectilePiercingMixin",
     "AbstractMagicProjectileMixin",
+    "ArrowVolleyEntityMixin",
     "BloodSlashProjectileMixin",
     "AeromancyFlightActivationMixin",
     "AeromancyFlightEffectMixin",
     "FeatherFlightFallDamageMixin",
-    "ConnectionAccessor"
+    "ConnectionAccessor",
+    "CommonHooksLootMixin",
+    "LivingEntityLootOverrideMixin"
   ],
   "client": [
     "AbstractSpellClientMixin",

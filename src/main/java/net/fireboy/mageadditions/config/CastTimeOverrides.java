@@ -68,6 +68,8 @@ public final class CastTimeOverrides {
             // transparently fall back to the old top-level config layout.
             BalanceSource balance = readBalanceSource(root, config);
             CounterspellConfig counterspell = readCounterspellSource(root, config);
+            ArrowVolleyConfig arrowVolley = readArrowVolleySource(root, config);
+            FeatherFlightConfig featherFlight = readFeatherFlightSource(root, config);
 
             CompileResult castTime = modules.balance_tweaks
                     ? compileRules(balance.castTimeRules, "cast-time")
@@ -90,8 +92,12 @@ public final class CastTimeOverrides {
             // Iron's original Counterspell behaviour.
             if (modules.spell_reworks) {
                 net.fireboy.mageadditions.spell.CounterspellHandler.reload(counterspell);
+                net.fireboy.mageadditions.rework.ArrowVolleyRework.reload(arrowVolley);
+                net.fireboy.mageadditions.rework.FeatherFlightRework.reload(featherFlight);
             } else {
                 net.fireboy.mageadditions.spell.CounterspellHandler.reload(disabledCounterspell());
+                net.fireboy.mageadditions.rework.ArrowVolleyRework.reload(disabledArrowVolley());
+                net.fireboy.mageadditions.rework.FeatherFlightRework.reload(disabledFeatherFlight());
             }
 
             int maxTicks = Math.max(0, balance.settings.max_cast_time_ticks);
@@ -105,17 +111,19 @@ public final class CastTimeOverrides {
                     modules.balance_tweaks,
                     modules.spell_reworks,
                     modules.custom_spells,
+                    modules.loot_changes,
                     modules.experimental
             );
 
             int skipped = castTime.skipped + mana.skipped + cooldown.skipped + behaviors.skipped;
 
             MageAdditions.LOGGER.info(
-                    "Loaded Mage Additions config from {}: modules [balance={}, reworks={}, customSpells={}, experimental={}], rules [{} cast-time, {} mana, {} cooldown] ({} skipped)",
+                    "Loaded Mage Additions config from {}: modules [balance={}, reworks={}, customSpells={}, lootChanges={}, experimental={}], rules [{} cast-time, {} mana, {} cooldown] ({} skipped)",
                     CONFIG_PATH,
                     onOff(modules.balance_tweaks),
                     onOff(modules.spell_reworks),
                     onOff(modules.custom_spells),
+                    onOff(modules.loot_changes),
                     onOff(modules.experimental),
                     castTime.rules.size(),
                     mana.rules.size(),
@@ -364,6 +372,7 @@ public final class CastTimeOverrides {
                 current.balanceTweaksEnabled,
                 current.spellReworksEnabled,
                 current.customSpellsEnabled,
+                current.lootChangesEnabled,
                 current.experimentalEnabled
         );
     }
@@ -421,6 +430,10 @@ public final class CastTimeOverrides {
         return snapshot.customSpellsEnabled;
     }
 
+    public static boolean lootChangesEnabled() {
+        return snapshot.lootChangesEnabled;
+    }
+
     public static boolean experimentalEnabled() {
         return snapshot.experimentalEnabled;
     }
@@ -430,6 +443,7 @@ public final class CastTimeOverrides {
         return "balance=" + onOff(current.balanceTweaksEnabled)
                 + ", reworks=" + onOff(current.spellReworksEnabled)
                 + ", custom_spells=" + onOff(current.customSpellsEnabled)
+                + ", loot_changes=" + onOff(current.lootChangesEnabled)
                 + ", experimental=" + onOff(current.experimentalEnabled);
     }
 
@@ -492,6 +506,44 @@ public final class CastTimeOverrides {
 
     private static CounterspellConfig disabledCounterspell() {
         CounterspellConfig disabled = new CounterspellConfig();
+        disabled.enabled = false;
+        return disabled;
+    }
+
+    private static ArrowVolleyConfig readArrowVolleySource(JsonObject root, CastTimeConfig config) {
+        if (root.has("spell_reworks")) {
+            CastTimeConfig.SpellReworks reworks = config.spell_reworks != null
+                    ? config.spell_reworks
+                    : new CastTimeConfig.SpellReworks();
+            return reworks.arrow_volley != null
+                    ? reworks.arrow_volley
+                    : new ArrowVolleyConfig();
+        }
+
+        return new ArrowVolleyConfig();
+    }
+
+    private static ArrowVolleyConfig disabledArrowVolley() {
+        ArrowVolleyConfig disabled = new ArrowVolleyConfig();
+        disabled.enabled = false;
+        return disabled;
+    }
+
+    private static FeatherFlightConfig readFeatherFlightSource(JsonObject root, CastTimeConfig config) {
+        if (root.has("spell_reworks")) {
+            CastTimeConfig.SpellReworks reworks = config.spell_reworks != null
+                    ? config.spell_reworks
+                    : new CastTimeConfig.SpellReworks();
+            return reworks.feather_flight != null
+                    ? reworks.feather_flight
+                    : new FeatherFlightConfig();
+        }
+
+        return new FeatherFlightConfig();
+    }
+
+    private static FeatherFlightConfig disabledFeatherFlight() {
+        FeatherFlightConfig disabled = new FeatherFlightConfig();
         disabled.enabled = false;
         return disabled;
     }
@@ -709,6 +761,7 @@ public final class CastTimeOverrides {
                 + "    \"balance_tweaks\": " + states.balanceTweaks() + ",\n"
                 + "    \"spell_reworks\": " + states.spellReworks() + ",\n"
                 + "    \"custom_spells\": " + states.customSpells() + ",\n"
+                + "    \"loot_changes\": " + states.lootChanges() + ",\n"
                 + "    \"experimental\": " + states.experimental() + "\n"
                 + "  }";
     }
@@ -1000,6 +1053,11 @@ public final class CastTimeOverrides {
                 // future custom spells already have a clean master toggle.
                 "custom_spells": true,
 
+                // Custom Iron's loot tables supplied by Mage Additions.
+                // Turning this off restores Iron's normal loot tables after
+                // the next resource reload (the in-game toggle reloads them).
+                "loot_changes": true,
+
                 // Reserved for unfinished or risky opt-in mechanics.
                 // No experimental features are currently registered.
                 "experimental": false
@@ -1129,6 +1187,54 @@ public final class CastTimeOverrides {
 
                   // Cone debug visualisation; normally leave false.
                   "debug_particles": false
+                },
+
+                // ARROW VOLLEY
+                // Fires every arrow at once in a forward cone.
+                "arrow_volley": {
+                  "enabled": true,
+
+                  // Full cone angle in degrees.
+                  "cone_angle_degrees": 40.0,
+
+                  // Absolute launch speed in blocks/tick.
+                  "projectile_speed": 1.15,
+
+                  // Extra damage added to every arrow per level above I.
+                  "damage_per_level": 0.25,
+
+                  // Maximum damaging arrows from one cast that one entity can absorb.
+                  "max_hits_per_target": 6,
+
+                  // At or below this distance, use the close-range multiplier.
+                  "close_range_distance": 3.0,
+
+                  // Point-blank damage multiplier per arrow (0.60 = 60%).
+                  "close_range_damage_multiplier": 0.60,
+
+                  // Damage ramps linearly back to 100% by this distance.
+                  "full_damage_distance": 7.0
+                },
+
+                // FEATHER FLIGHT (Aeromancy)
+                // Replaces air-swimming with controlled feather movement.
+                "feather_flight": {
+                  "enabled": true,
+
+                  // Maximum downward speed while jump is held. Positive blocks/tick.
+                  "slow_fall_speed": 0.115,
+
+                  // Horizontal acceleration added per airborne tick.
+                  "air_acceleration": 0.018,
+
+                  // Maximum horizontal speed while airborne.
+                  "max_horizontal_speed": 0.48,
+
+                  // Added to vanilla's normal 0.42 jump strength.
+                  "extra_jump_strength": 0.16,
+
+                  // Complete fall-damage immunity while Feather Flight is active.
+                  "fall_damage_immunity": true
                 }
               },
 
@@ -1307,6 +1413,7 @@ public final class CastTimeOverrides {
             boolean balanceTweaksEnabled,
             boolean spellReworksEnabled,
             boolean customSpellsEnabled,
+            boolean lootChangesEnabled,
             boolean experimentalEnabled
     ) {
         static Snapshot defaults() {
@@ -1320,6 +1427,7 @@ public final class CastTimeOverrides {
                     true,
                     true,
                     true,
+                    true,
                     false
             );
         }
@@ -1330,10 +1438,11 @@ public final class CastTimeOverrides {
             boolean balanceTweaks,
             boolean spellReworks,
             boolean customSpells,
+            boolean lootChanges,
             boolean experimental
     ) {
         public static ModuleStates defaults() {
-            return new ModuleStates(true, true, true, false);
+            return new ModuleStates(true, true, true, true, false);
         }
     }
 

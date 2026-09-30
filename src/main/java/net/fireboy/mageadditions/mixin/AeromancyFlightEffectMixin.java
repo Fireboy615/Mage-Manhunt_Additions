@@ -23,7 +23,13 @@ public abstract class AeromancyFlightEffectMixin {
             int amplifier,
             CallbackInfoReturnable<Boolean> cir
     ) {
-        if (!FeatherFlightRework.enabled()) return;
+        if (!FeatherFlightRework.enabled()) {
+            // If the rework is disabled while Flight is already active, remove
+            // Mage Additions' transient jump modifier immediately and let
+            // Aeromancy resume its original effect tick normally.
+            FeatherFlightRework.removeJumpBoost(entity);
+            return;
+        }
 
         // Remove any native low-gravity modifier left by the original effect so
         // toggling the rework while the effect is active also fixes itself.

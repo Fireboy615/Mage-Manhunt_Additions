@@ -12,6 +12,7 @@ import java.util.Map;
  * balance_tweaks -> cast time / mana / cooldown
  * spell_reworks -> Counterspell and future vanilla-Iron's reworks
  * custom_spells -> reserved for Mage Additions spells
+ * loot_changes -> custom Iron's loot-table replacements
  * experimental -> reserved for unfinished/opt-in mechanics
  *
  * Legacy top-level fields are retained so older Mage Additions configs continue
@@ -41,6 +42,9 @@ public final class CastTimeConfig {
 
         /** Master switch reserved for Mage Additions custom spells. */
         public boolean custom_spells = true;
+
+        /** Master switch for the custom Iron's loot-table replacement pack. */
+        public boolean loot_changes = true;
 
         /** Master switch for unfinished/experimental features. */
         public boolean experimental = false;
@@ -156,6 +160,8 @@ public final class CastTimeConfig {
 
     public static final class SpellReworks {
         public CounterspellConfig counterspell = new CounterspellConfig();
+        public ArrowVolleyConfig arrow_volley = new ArrowVolleyConfig();
+        public FeatherFlightConfig feather_flight = new FeatherFlightConfig();
     }
 
     public static final class Settings {

@@ -20,6 +20,9 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.numbers.BlankFormat;
+import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -32,8 +35,13 @@ import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.border.WorldBorder;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.scores.DisplaySlot;
+import net.minecraft.world.scores.Objective;
 import net.minecraft.world.scores.PlayerTeam;
+import net.minecraft.world.scores.ScoreAccess;
+import net.minecraft.world.scores.ScoreHolder;
 import net.minecraft.world.scores.Scoreboard;
+import net.minecraft.world.scores.criteria.ObjectiveCriteria;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 /** Server-authoritative minigame lobby and match state. */
@@ -48,6 +56,7 @@ public final class MinigameManager {
     private static final Map<UUID, FreezePoint> FREEZE_POINTS = new HashMap<>();
     private static final Map<UUID, GameType> PRACTICE_DEATH_GAMEMODES = new HashMap<>();
     private static final Map<UUID, Double> DAMAGE_DEALT = new HashMap<>();
+    private static final Map<UUID, Double> DAMAGE_TAKEN = new HashMap<>();
     private static final Map<UUID, Integer> KILLS = new HashMap<>();
     private static final String[] RECIPE_IDS = {
             "crafttweaker:scroll_forge_change",
@@ -78,6 +87,8 @@ public final class MinigameManager {
     private static int persistenceTickCounter;
     private static UUID hostId;
     private static boolean frozeGameTicks;
+    private static boolean winnerAnnounced;
+    private static boolean finalShowdown;
 
     private MinigameManager() {}
 
@@ -114,6 +125,8 @@ public final class MinigameManager {
         tickCounter = 0;
         persistenceTickCounter = 0;
         frozeGameTicks = false;
+        winnerAnnounced = false;
+        finalShowdown = false;
         TEAM_SELECTIONS.clear();
         MATCH_PARTICIPANTS.clear();
         DEAD_PARTICIPANTS.clear();
@@ -121,6 +134,7 @@ public final class MinigameManager {
         FREEZE_POINTS.clear();
         PRACTICE_DEATH_GAMEMODES.clear();
         DAMAGE_DEALT.clear();
+        DAMAGE_TAKEN.clear();
         KILLS.clear();
 
         setPvp(server, false);
@@ -243,6 +257,8 @@ public final class MinigameManager {
         }
 
         phase = Phase.RUNNING;
+        winnerAnnounced = false;
+        finalShowdown = false;
         MATCH_PARTICIPANTS.clear();
         MATCH_PARTICIPANTS.addAll(TEAM_SELECTIONS.keySet());
         DEAD_PARTICIPANTS.clear();
@@ -438,6 +454,11 @@ public final class MinigameManager {
             MATCH_PARTICIPANTS.addAll(snapshot.participants());
             DEAD_PARTICIPANTS.addAll(snapshot.deadParticipants());
             PRACTICE_PROMOTED_OPS.addAll(snapshot.practicePromotedOps());
+            DAMAGE_DEALT.putAll(snapshot.damageDealt());
+            DAMAGE_TAKEN.putAll(snapshot.damageTaken());
+            KILLS.putAll(snapshot.kills());
+            winnerAnnounced = snapshot.winnerAnnounced();
+            finalShowdown = snapshot.finalShowdown();
             phase = snapshot.phase();
 
             prepareScoreboardTeams(server, game);
@@ -445,6 +466,9 @@ public final class MinigameManager {
             configurePracticeRules(server, game.practice() && (phase == Phase.RUNNING || phase == Phase.PAUSED));
             if (phase == Phase.RUNNING || phase == Phase.PAUSED) {
                 initializeMatchScoreboard(server);
+                if (winnerAnnounced) {
+                    showFinalResultsScoreboard(server);
+                }
             }
 
             if (phase == Phase.RUNNING || phase == Phase.PAUSED) {
@@ -456,8 +480,15 @@ public final class MinigameManager {
             }
 
             if (phase == Phase.RUNNING) {
-                // Never let a recovered server resume the shrinking border before people reconnect.
-                pauseMatchInternal(server, null, true, false);
+                if (winnerAnnounced) {
+                    // A finished match stays finished across a server restart.
+                    stopBorder(server);
+                    setPvp(server, false);
+                    saveSession(server);
+                } else {
+                    // Never let a recovered server resume the shrinking border before people reconnect.
+                    pauseMatchInternal(server, null, true, false);
+                }
             } else if (phase == Phase.PAUSED) {
                 stopBorder(server);
                 freezeGameTicks(server);
@@ -477,6 +508,9 @@ public final class MinigameManager {
 
     public static void onServerTick(MinecraftServer server) {
         freezeDaylightAtNoon(server);
+        if ((phase == Phase.RUNNING || phase == Phase.PAUSED) && winnerAnnounced && server.getTickCount() % 20 == 0) {
+            ensureMatchScoreboard(server);
+        }
         if ((phase == Phase.RUNNING || phase == Phase.PAUSED) && isPracticeActive()) {
             enforcePracticeBorder(server);
         }
@@ -503,6 +537,14 @@ public final class MinigameManager {
         if (phase != Phase.RUNNING) {
             return;
         }
+        if (winnerAnnounced) {
+            persistenceTickCounter++;
+            if (persistenceTickCounter >= 20) {
+                persistenceTickCounter = 0;
+                saveSession(server);
+            }
+            return;
+        }
         if (matchTicksRemaining > 0) {
             matchTicksRemaining--;
         }
@@ -520,10 +562,13 @@ public final class MinigameManager {
         WorldBorder border = server.overworld().getWorldBorder();
         int seconds = Math.max(0, matchTicksRemaining / 20);
         String time = String.format("%02d:%02d", seconds / 60, seconds % 60);
+        int borderRadius = Math.max(0, (int) Math.round(border.getSize() / 2.0D));
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             int distance = Math.max(0, (int) Math.floor(border.getDistanceToBorder(player)));
             player.displayClientMessage(
                     Component.literal("Border: ").withStyle(ChatFormatting.GOLD)
+                            .append(Component.literal(Integer.toString(borderRadius)).withStyle(ChatFormatting.YELLOW))
+                            .append(Component.literal("  |  Distance: ").withStyle(ChatFormatting.GOLD))
                             .append(Component.literal(Integer.toString(distance)).withStyle(ChatFormatting.YELLOW))
                             .append(Component.literal("  |  Time: ").withStyle(ChatFormatting.GOLD))
                             .append(Component.literal(time).withStyle(ChatFormatting.YELLOW)),
@@ -561,7 +606,7 @@ public final class MinigameManager {
 
     public static void pauseMatch(ServerPlayer operator) {
         MinecraftServer server = operator.getServer();
-        if (server == null || phase != Phase.RUNNING) {
+        if (server == null || phase != Phase.RUNNING || winnerAnnounced) {
             sendMatchControlState(operator);
             return;
         }
@@ -789,7 +834,8 @@ public final class MinigameManager {
 
         if (phase == Phase.RUNNING) {
             restorePlayerScoreboardTeam(player, activeDefinition());
-            if (hostId != null && hostId.equals(player.getUUID())) {
+            syncPlayerScoreboardStats(player);
+            if (!winnerAnnounced && hostId != null && hostId.equals(player.getUUID())) {
                 pauseMatchInternal(server, player, false, true);
             } else {
                 restorePlayerForRunningMatch(player, activeDefinition());
@@ -800,6 +846,7 @@ public final class MinigameManager {
 
         if (phase == Phase.PAUSED) {
             restorePlayerScoreboardTeam(player, activeDefinition());
+            syncPlayerScoreboardStats(player);
             if (MATCH_PARTICIPANTS.contains(player.getUUID()) && !DEAD_PARTICIPANTS.contains(player.getUUID())) {
                 ensureInsideBorder(player, server.overworld());
             }
@@ -835,7 +882,7 @@ public final class MinigameManager {
             return;
         }
 
-        if (phase == Phase.RUNNING && hostId != null && hostId.equals(player.getUUID())) {
+        if (phase == Phase.RUNNING && !winnerAnnounced && hostId != null && hostId.equals(player.getUUID())) {
             pauseMatchInternal(server, player, false, true);
             FREEZE_POINTS.remove(player.getUUID());
             return;
@@ -923,6 +970,8 @@ public final class MinigameManager {
         tickCounter = 0;
         persistenceTickCounter = 0;
         frozeGameTicks = false;
+        winnerAnnounced = false;
+        finalShowdown = false;
         TEAM_SELECTIONS.clear();
         MATCH_PARTICIPANTS.clear();
         DEAD_PARTICIPANTS.clear();
@@ -930,6 +979,7 @@ public final class MinigameManager {
         FREEZE_POINTS.clear();
         PRACTICE_DEATH_GAMEMODES.clear();
         DAMAGE_DEALT.clear();
+        DAMAGE_TAKEN.clear();
         KILLS.clear();
     }
 
@@ -1030,9 +1080,18 @@ public final class MinigameManager {
     private static void showPausedActionbar(MinecraftServer server) {
         int seconds = Math.max(0, matchTicksRemaining / 20);
         String time = String.format("%02d:%02d", seconds / 60, seconds % 60);
+        WorldBorder border = server.overworld().getWorldBorder();
+        int borderRadius = Math.max(0, (int) Math.round(border.getSize() / 2.0D));
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            int distance = Math.max(0, (int) Math.floor(border.getDistanceToBorder(player)));
             player.displayClientMessage(
-                    Component.translatable("message.mageadditions.minigame.paused_actionbar", time).withStyle(ChatFormatting.YELLOW),
+                    Component.literal("MATCH PAUSED  |  Border: ").withStyle(ChatFormatting.YELLOW)
+                            .append(Component.literal(Integer.toString(borderRadius)).withStyle(ChatFormatting.GOLD))
+                            .append(Component.literal("  |  Distance: ").withStyle(ChatFormatting.YELLOW))
+                            .append(Component.literal(Integer.toString(distance)).withStyle(ChatFormatting.GOLD))
+                            .append(Component.literal("  |  Time: ").withStyle(ChatFormatting.YELLOW))
+                            .append(Component.literal(time).withStyle(ChatFormatting.GOLD))
+                            .append(Component.literal("  |  Waiting for an operator to continue").withStyle(ChatFormatting.YELLOW)),
                     true
             );
         }
@@ -1352,7 +1411,12 @@ public final class MinigameManager {
                 TEAM_SELECTIONS,
                 MATCH_PARTICIPANTS,
                 DEAD_PARTICIPANTS,
-                PRACTICE_PROMOTED_OPS
+                PRACTICE_PROMOTED_OPS,
+                DAMAGE_DEALT,
+                DAMAGE_TAKEN,
+                KILLS,
+                winnerAnnounced,
+                finalShowdown
         ));
     }
 
@@ -1592,47 +1656,291 @@ public final class MinigameManager {
         }
     }
 
+    public static void onPlayerDeath(ServerPlayer player) {
+        MinigameDefinition game = activeDefinition();
+        MinecraftServer server = player == null ? null : player.getServer();
+        if (server == null || phase != Phase.RUNNING || game == null || game.practice() || winnerAnnounced) {
+            return;
+        }
+        if (!MATCH_PARTICIPANTS.contains(player.getUUID()) || !DEAD_PARTICIPANTS.add(player.getUUID())) {
+            return;
+        }
+        saveSession(server);
+        announceWinnerIfResolved(server, game);
+    }
+
+    private static void announceWinnerIfResolved(MinecraftServer server, MinigameDefinition game) {
+        List<UUID> living = new ArrayList<>();
+        for (UUID participant : MATCH_PARTICIPANTS) {
+            if (!DEAD_PARTICIPANTS.contains(participant)) {
+                living.add(participant);
+            }
+        }
+        if (living.isEmpty()) {
+            return;
+        }
+
+        // Once the last opposing team is gone, surviving teammates must fight
+        // each other until only one player remains. This preserves the team phase
+        // while still giving the match a single final winner.
+        if (finalShowdown) {
+            if (living.size() == 1) {
+                announcePlayerWinner(server, living.getFirst());
+            }
+            return;
+        }
+
+        if (teamsEnabled) {
+            Set<ResourceLocation> matchTeams = new HashSet<>();
+            for (UUID participant : MATCH_PARTICIPANTS) {
+                ResourceLocation teamId = TEAM_SELECTIONS.get(participant);
+                if (teamId != null && isActiveTeam(game, teamId)) {
+                    matchTeams.add(teamId);
+                }
+            }
+            if (matchTeams.size() < 2) {
+                return;
+            }
+
+            ResourceLocation survivingTeam = null;
+            for (UUID participant : living) {
+                ResourceLocation teamId = TEAM_SELECTIONS.get(participant);
+                if (teamId == null || !isActiveTeam(game, teamId)) {
+                    return;
+                }
+                if (survivingTeam == null) {
+                    survivingTeam = teamId;
+                } else if (!survivingTeam.equals(teamId)) {
+                    return;
+                }
+            }
+
+            MinigameDefinition.TeamDefinition team = survivingTeam == null ? null : game.team(survivingTeam);
+            if (team == null) {
+                return;
+            }
+
+            if (living.size() > 1) {
+                beginFinalShowdown(server, team);
+                return;
+            }
+
+            finishMatchWithTitle(
+                    server,
+                    Component.translatable("message.mageadditions.minigame.team_wins", team.displayName())
+                            .withStyle(ChatFormatting.GOLD)
+            );
+            return;
+        }
+
+        if (living.size() == 1) {
+            announcePlayerWinner(server, living.getFirst());
+        }
+    }
+
+    private static void beginFinalShowdown(MinecraftServer server, MinigameDefinition.TeamDefinition team) {
+        if (finalShowdown || winnerAnnounced) {
+            return;
+        }
+        finalShowdown = true;
+        setPvp(server, true);
+
+        Component title = Component.translatable("message.mageadditions.minigame.final_showdown")
+                .withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD);
+        Component message = Component.translatable(
+                "message.mageadditions.minigame.final_showdown_team",
+                team.displayName()
+        ).withStyle(ChatFormatting.YELLOW);
+
+        for (ServerPlayer viewer : server.getPlayerList().getPlayers()) {
+            viewer.connection.send(new ClientboundSetTitlesAnimationPacket(10, 80, 20));
+            viewer.connection.send(new ClientboundSetTitleTextPacket(title));
+        }
+        server.getPlayerList().broadcastSystemMessage(message, false);
+        saveSession(server);
+    }
+
+    private static void announcePlayerWinner(MinecraftServer server, UUID winnerId) {
+        ServerPlayer winner = server.getPlayerList().getPlayer(winnerId);
+        Component winnerName = winner != null
+                ? winner.getDisplayName()
+                : Component.literal(participantName(server, winnerId));
+        finishMatchWithTitle(
+                server,
+                Component.translatable("message.mageadditions.minigame.player_wins", winnerName)
+                        .withStyle(ChatFormatting.GOLD)
+        );
+    }
+
+    private static void finishMatchWithTitle(MinecraftServer server, Component title) {
+        winnerAnnounced = true;
+        setPvp(server, false);
+        stopBorder(server);
+        showFinalResultsScoreboard(server);
+        for (ServerPlayer viewer : server.getPlayerList().getPlayers()) {
+            viewer.connection.send(new ClientboundSetTitlesAnimationPacket(10, 100, 20));
+            viewer.connection.send(new ClientboundSetTitleTextPacket(title));
+        }
+        server.getPlayerList().broadcastSystemMessage(title, false);
+        saveSession(server);
+    }
+
     public static void recordDamage(ServerPlayer attacker, ServerPlayer victim, float amount) {
-        if (phase != Phase.RUNNING || attacker == null || victim == null || attacker == victim || amount <= 0.0F) return;
+        if (phase != Phase.RUNNING || winnerAnnounced || attacker == null || victim == null || attacker == victim || amount <= 0.0F) return;
         if (!MATCH_PARTICIPANTS.contains(attacker.getUUID()) || !MATCH_PARTICIPANTS.contains(victim.getUUID())) return;
-        double total = DAMAGE_DEALT.merge(attacker.getUUID(), (double) amount, Double::sum);
-        updateScore(attacker, "ma_damage", Math.max(0, (int) Math.round(total)));
+        DAMAGE_DEALT.merge(attacker.getUUID(), (double) amount, Double::sum);
+    }
+
+    public static void recordDamageTaken(ServerPlayer victim, float amount) {
+        if (phase != Phase.RUNNING || winnerAnnounced || victim == null || amount <= 0.0F) return;
+        if (!MATCH_PARTICIPANTS.contains(victim.getUUID())) return;
+        DAMAGE_TAKEN.merge(victim.getUUID(), (double) amount, Double::sum);
     }
 
     public static void recordKill(ServerPlayer killer, ServerPlayer victim) {
-        if (phase != Phase.RUNNING || killer == null || victim == null || killer == victim) return;
+        if (phase != Phase.RUNNING || winnerAnnounced || killer == null || victim == null || killer == victim) return;
         if (!MATCH_PARTICIPANTS.contains(killer.getUUID()) || !MATCH_PARTICIPANTS.contains(victim.getUUID())) return;
-        int total = KILLS.merge(killer.getUUID(), 1, Integer::sum);
-        updateScore(killer, "ma_kills", total);
+        KILLS.merge(killer.getUUID(), 1, Integer::sum);
     }
 
+    /**
+     * Match stats are tracked in memory while the game is running. No objective
+     * is displayed until the winner is known, so there is no combat clutter
+     * above player names, in TAB, or in the sidebar during the match.
+     */
     private static void initializeMatchScoreboard(MinecraftServer server) {
-        runServerCommand(server, "scoreboard objectives remove ma_kills");
-        runServerCommand(server, "scoreboard objectives remove ma_damage");
-        runServerCommand(server, "scoreboard objectives add ma_kills dummy Kills");
-        runServerCommand(server, "scoreboard objectives add ma_damage dummy Damage");
-        runServerCommand(server, "scoreboard objectives setdisplay sidebar ma_kills");
-        runServerCommand(server, "scoreboard objectives setdisplay list ma_damage");
-        runServerCommand(server, "scoreboard objectives setdisplay below_name ma_damage");
-        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            updateScore(player, "ma_kills", 0);
-            updateScore(player, "ma_damage", 0);
+        clearMatchScoreboard(server);
+    }
+
+    private static void showFinalResultsScoreboard(MinecraftServer server) {
+        Scoreboard scoreboard = server.getScoreboard();
+        clearMatchScoreboard(server);
+
+        Objective results = scoreboard.addObjective(
+                "ma_results",
+                ObjectiveCriteria.DUMMY,
+                Component.literal("Final Results"),
+                ObjectiveCriteria.RenderType.INTEGER,
+                false,
+                BlankFormat.INSTANCE
+        );
+
+        List<UUID> players = new ArrayList<>(MATCH_PARTICIPANTS);
+        players.sort((left, right) -> {
+            int kills = Integer.compare(KILLS.getOrDefault(right, 0), KILLS.getOrDefault(left, 0));
+            if (kills != 0) return kills;
+            int damage = Double.compare(DAMAGE_DEALT.getOrDefault(right, 0.0D), DAMAGE_DEALT.getOrDefault(left, 0.0D));
+            if (damage != 0) return damage;
+            return participantName(server, left).compareToIgnoreCase(participantName(server, right));
+        });
+
+        int index = 0;
+        for (UUID playerId : players) {
+            String name = participantName(server, playerId);
+            int kills = KILLS.getOrDefault(playerId, 0);
+            int dealt = Math.max(0, (int) Math.round(DAMAGE_DEALT.getOrDefault(playerId, 0.0D)));
+            int taken = Math.max(0, (int) Math.round(DAMAGE_TAKEN.getOrDefault(playerId, 0.0D)));
+
+            ChatFormatting playerColor = participantColor(playerId);
+            Component line = Component.literal(name).withStyle(playerColor)
+                    .append(Component.literal("  K:").withStyle(ChatFormatting.GRAY))
+                    .append(Component.literal(Integer.toString(kills)).withStyle(ChatFormatting.WHITE))
+                    .append(Component.literal("  Done:").withStyle(ChatFormatting.GRAY))
+                    .append(Component.literal(Integer.toString(dealt)).withStyle(ChatFormatting.WHITE))
+                    .append(Component.literal("  Taken:").withStyle(ChatFormatting.GRAY))
+                    .append(Component.literal(Integer.toString(taken)).withStyle(ChatFormatting.WHITE));
+
+            ScoreHolder row = ScoreHolder.forNameOnly("ma_result_" + index);
+            ScoreAccess score = scoreboard.getOrCreatePlayerScore(row, results);
+            score.set(1000 - index);
+            score.display(line);
+            score.numberFormatOverride(BlankFormat.INSTANCE);
+            index++;
+            if (index >= 15) {
+                break;
+            }
+        }
+
+        setSidebarObjective(scoreboard, results);
+    }
+
+    /** Minecraft prefers a colour-specific sidebar slot for players on coloured teams. */
+    private static void setSidebarObjective(Scoreboard scoreboard, Objective objective) {
+        scoreboard.setDisplayObjective(DisplaySlot.SIDEBAR, objective);
+        for (DisplaySlot slot : DisplaySlot.values()) {
+            if (slot.getSerializedName().startsWith("sidebar.team.")) {
+                scoreboard.setDisplayObjective(slot, objective);
+            }
         }
     }
 
-    private static void updateScore(ServerPlayer player, String objective, int value) {
-        MinecraftServer server = player.getServer();
-        if (server != null) {
-            runServerCommand(server, "scoreboard players set " + player.getScoreboardName() + " " + objective + " " + value);
+    private static void ensureMatchScoreboard(MinecraftServer server) {
+        if (!winnerAnnounced) {
+            return;
         }
+        Scoreboard scoreboard = server.getScoreboard();
+        Objective results = scoreboard.getObjective("ma_results");
+        if (results == null) {
+            showFinalResultsScoreboard(server);
+            return;
+        }
+        if (scoreboard.getDisplayObjective(DisplaySlot.SIDEBAR) != results) {
+            setSidebarObjective(scoreboard, results);
+            return;
+        }
+        for (DisplaySlot slot : DisplaySlot.values()) {
+            if (slot.getSerializedName().startsWith("sidebar.team.") && scoreboard.getDisplayObjective(slot) != results) {
+                scoreboard.setDisplayObjective(slot, results);
+            }
+        }
+    }
+
+    private static String participantName(MinecraftServer server, UUID playerId) {
+        ServerPlayer online = server.getPlayerList().getPlayer(playerId);
+        if (online != null) {
+            return online.getGameProfile().getName();
+        }
+        return server.getProfileCache().get(playerId)
+                .map(profile -> profile.getName())
+                .orElse("Player");
+    }
+
+    private static ChatFormatting participantColor(UUID playerId) {
+        if (!teamsEnabled) {
+            return ChatFormatting.WHITE;
+        }
+        MinigameDefinition game = activeDefinition();
+        ResourceLocation teamId = TEAM_SELECTIONS.get(playerId);
+        MinigameDefinition.TeamDefinition team = game == null || teamId == null ? null : game.team(teamId);
+        return team == null ? ChatFormatting.WHITE : team.color();
     }
 
     private static void clearMatchScoreboard(MinecraftServer server) {
-        runServerCommand(server, "scoreboard objectives setdisplay sidebar");
-        runServerCommand(server, "scoreboard objectives setdisplay list");
-        runServerCommand(server, "scoreboard objectives setdisplay below_name");
-        runServerCommand(server, "scoreboard objectives remove ma_kills");
-        runServerCommand(server, "scoreboard objectives remove ma_damage");
+        Scoreboard scoreboard = server.getScoreboard();
+        Set<Objective> matchObjectives = new HashSet<>();
+        for (String name : List.of("ma_kills", "ma_damage", "ma_damage_taken", "ma_results")) {
+            Objective objective = scoreboard.getObjective(name);
+            if (objective != null) {
+                matchObjectives.add(objective);
+            }
+        }
+
+        for (DisplaySlot slot : DisplaySlot.values()) {
+            Objective displayed = scoreboard.getDisplayObjective(slot);
+            if (displayed != null && matchObjectives.contains(displayed)) {
+                scoreboard.setDisplayObjective(slot, null);
+            }
+        }
+        for (Objective objective : matchObjectives) {
+            scoreboard.removeObjective(objective);
+        }
+    }
+
+    private static void syncPlayerScoreboardStats(ServerPlayer player) {
+        MinecraftServer server = player == null ? null : player.getServer();
+        if (server != null && winnerAnnounced) {
+            ensureMatchScoreboard(server);
+        }
     }
 
     private static void configurePracticeRules(MinecraftServer server, boolean practice) {

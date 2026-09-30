@@ -51,6 +51,11 @@ final class MinigameSessionStore {
         properties.setProperty("participants", encodeUuids(snapshot.participants()));
         properties.setProperty("deadParticipants", encodeUuids(snapshot.deadParticipants()));
         properties.setProperty("practicePromotedOps", encodeUuids(snapshot.practicePromotedOps()));
+        properties.setProperty("damageDealt", encodeDoubleMap(snapshot.damageDealt()));
+        properties.setProperty("damageTaken", encodeDoubleMap(snapshot.damageTaken()));
+        properties.setProperty("kills", encodeIntMap(snapshot.kills()));
+        properties.setProperty("winnerAnnounced", Boolean.toString(snapshot.winnerAnnounced()));
+        properties.setProperty("finalShowdown", Boolean.toString(snapshot.finalShowdown()));
 
         Path file = stateFile(server);
         Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
@@ -135,7 +140,12 @@ final class MinigameSessionStore {
                     decodeTeamSelections(properties.getProperty("teamSelections", "")),
                     decodeUuids(properties.getProperty("participants", "")),
                     decodeUuids(properties.getProperty("deadParticipants", "")),
-                    decodeUuids(properties.getProperty("practicePromotedOps", ""))
+                    decodeUuids(properties.getProperty("practicePromotedOps", "")),
+                    decodeDoubleMap(properties.getProperty("damageDealt", "")),
+                    decodeDoubleMap(properties.getProperty("damageTaken", "")),
+                    decodeIntMap(properties.getProperty("kills", "")),
+                    Boolean.parseBoolean(properties.getProperty("winnerAnnounced", "false")),
+                    Boolean.parseBoolean(properties.getProperty("finalShowdown", "false"))
             ));
         } catch (Exception ex) {
             MageAdditions.LOGGER.warn("Could not load minigame recovery state from {}; starting without a recovered session", file, ex);
@@ -212,6 +222,75 @@ final class MinigameSessionStore {
         return decoded;
     }
 
+    private static String encodeDoubleMap(Map<UUID, Double> values) {
+        StringBuilder encoded = new StringBuilder();
+        for (Map.Entry<UUID, Double> entry : values.entrySet()) {
+            if (!encoded.isEmpty()) {
+                encoded.append(';');
+            }
+            encoded.append(entry.getKey()).append('|').append(entry.getValue());
+        }
+        return encoded.toString();
+    }
+
+    private static Map<UUID, Double> decodeDoubleMap(String value) {
+        Map<UUID, Double> decoded = new HashMap<>();
+        if (value == null || value.isBlank()) {
+            return decoded;
+        }
+        for (String token : value.split(";")) {
+            int separator = token.indexOf('|');
+            if (separator <= 0 || separator >= token.length() - 1) {
+                continue;
+            }
+            UUID uuid = parseUuid(token.substring(0, separator));
+            if (uuid == null) {
+                continue;
+            }
+            try {
+                double amount = Double.parseDouble(token.substring(separator + 1));
+                if (Double.isFinite(amount) && amount >= 0.0D) {
+                    decoded.put(uuid, amount);
+                }
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return decoded;
+    }
+
+    private static String encodeIntMap(Map<UUID, Integer> values) {
+        StringBuilder encoded = new StringBuilder();
+        for (Map.Entry<UUID, Integer> entry : values.entrySet()) {
+            if (!encoded.isEmpty()) {
+                encoded.append(';');
+            }
+            encoded.append(entry.getKey()).append('|').append(entry.getValue());
+        }
+        return encoded.toString();
+    }
+
+    private static Map<UUID, Integer> decodeIntMap(String value) {
+        Map<UUID, Integer> decoded = new HashMap<>();
+        if (value == null || value.isBlank()) {
+            return decoded;
+        }
+        for (String token : value.split(";")) {
+            int separator = token.indexOf('|');
+            if (separator <= 0 || separator >= token.length() - 1) {
+                continue;
+            }
+            UUID uuid = parseUuid(token.substring(0, separator));
+            if (uuid == null) {
+                continue;
+            }
+            try {
+                decoded.put(uuid, Math.max(0, Integer.parseInt(token.substring(separator + 1))));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return decoded;
+    }
+
     private static double readRadius(Properties properties, String radiusKey, String legacySizeKey, double fallback) {
         String radius = properties.getProperty(radiusKey);
         if (radius != null) {
@@ -248,13 +327,21 @@ final class MinigameSessionStore {
             Map<UUID, ResourceLocation> teamSelections,
             Set<UUID> participants,
             Set<UUID> deadParticipants,
-            Set<UUID> practicePromotedOps
+            Set<UUID> practicePromotedOps,
+            Map<UUID, Double> damageDealt,
+            Map<UUID, Double> damageTaken,
+            Map<UUID, Integer> kills,
+            boolean winnerAnnounced,
+            boolean finalShowdown
     ) {
         Snapshot {
             teamSelections = Map.copyOf(teamSelections);
             participants = Set.copyOf(participants);
             deadParticipants = Set.copyOf(deadParticipants);
             practicePromotedOps = Set.copyOf(practicePromotedOps);
+            damageDealt = Map.copyOf(damageDealt);
+            damageTaken = Map.copyOf(damageTaken);
+            kills = Map.copyOf(kills);
         }
     }
 }
