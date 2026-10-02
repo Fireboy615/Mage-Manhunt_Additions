@@ -20,7 +20,9 @@
     "FeatherFlightFallDamageMixin",
     "ConnectionAccessor",
     "CommonHooksLootMixin",
-    "LivingEntityLootOverrideMixin"
+    "LivingEntityLootOverrideMixin",
+    "InvisibilityRingVisionMixin",
+    "BookDropMixin"
   ],
   "client": [
     "AbstractSpellClientMixin",

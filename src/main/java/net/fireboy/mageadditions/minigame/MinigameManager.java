@@ -20,7 +20,6 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.numbers.BlankFormat;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.resources.ResourceLocation;
@@ -58,6 +57,7 @@ public final class MinigameManager {
     private static final Map<UUID, Double> DAMAGE_DEALT = new HashMap<>();
     private static final Map<UUID, Double> DAMAGE_TAKEN = new HashMap<>();
     private static final Map<UUID, Integer> KILLS = new HashMap<>();
+    private static final List<BlockPos> RANDOM_SPAWN_POINTS = new ArrayList<>();
     private static final String[] RECIPE_IDS = {
             "crafttweaker:scroll_forge_change",
             "crafttweaker:copper_book_change",
@@ -136,6 +136,7 @@ public final class MinigameManager {
         DAMAGE_DEALT.clear();
         DAMAGE_TAKEN.clear();
         KILLS.clear();
+        RANDOM_SPAWN_POINTS.clear();
 
         setPvp(server, false);
         prepareScoreboardTeams(server, game);
@@ -218,6 +219,7 @@ public final class MinigameManager {
         }
         revokePracticeOps(server);
 
+        RANDOM_SPAWN_POINTS.clear();
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             PacketDistributor.sendToPlayer(player, CloseTeamSelectionPayload.INSTANCE);
             PacketDistributor.sendToPlayer(player, new TeamOutlinePayload(false, List.of()));
@@ -290,6 +292,7 @@ public final class MinigameManager {
             }
         }
 
+        RANDOM_SPAWN_POINTS.clear();
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             PacketDistributor.sendToPlayer(player, CloseTeamSelectionPayload.INSTANCE);
             if (game.practice()) {
@@ -393,20 +396,30 @@ public final class MinigameManager {
     private static boolean randomTeleport(ServerPlayer player, ServerLevel level) {
         RandomSource random = level.getRandom();
         WorldBorder border = level.getWorldBorder();
-        double margin = Math.min(24.0, Math.max(3.0, border.getSize() / 8.0));
-        double half = Math.max(1.0, border.getSize() / 2.0 - margin);
-        int minX = (int) Math.ceil(border.getCenterX() - half);
-        int maxX = (int) Math.floor(border.getCenterX() + half);
-        int minZ = (int) Math.ceil(border.getCenterZ() - half);
-        int maxZ = (int) Math.floor(border.getCenterZ() + half);
 
-        if (minX > maxX || minZ > maxZ) {
-            return false;
-        }
+        // Spawn in an annulus instead of a square around the centre. This keeps every
+        // initial spawn between 25% and 75% of the active maximum radius while still
+        // giving every direction an equal chance.
+        double maxBorderRadius = Math.max(1.0D, border.getSize() / 2.0D);
+        double minSpawnRadius = maxBorderRadius * 0.25D;
+        double maxSpawnRadius = maxBorderRadius * 0.75D;
+        double minSpawnRadiusSq = minSpawnRadius * minSpawnRadius;
+        double maxSpawnRadiusSq = maxSpawnRadius * maxSpawnRadius;
 
-        for (int attempt = 0; attempt < 120; attempt++) {
-            int x = random.nextIntBetweenInclusive(minX, maxX);
-            int z = random.nextIntBetweenInclusive(minZ, maxZ);
+        BlockPos bestSpawn = null;
+        double bestSeparationSq = -1.0D;
+        int validCandidates = 0;
+
+        // Evaluate several random safe candidates and, once other players have been
+        // placed, prefer the candidate with the greatest distance from their spawn
+        // points. This keeps the placement random while avoiding unlucky clusters.
+        for (int attempt = 0; attempt < 240 && validCandidates < 32; attempt++) {
+            // sqrt sampling makes the spawn uniformly random by area across the annulus.
+            double radius = Math.sqrt(minSpawnRadiusSq
+                    + random.nextDouble() * (maxSpawnRadiusSq - minSpawnRadiusSq));
+            double angle = random.nextDouble() * Math.PI * 2.0D;
+            int x = (int) Math.floor(border.getCenterX() + Math.cos(angle) * radius);
+            int z = (int) Math.floor(border.getCenterZ() + Math.sin(angle) * radius);
             int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
             if (y <= level.getMinBuildHeight() + 1 || y >= level.getMaxBuildHeight() - 2) {
                 continue;
@@ -421,9 +434,38 @@ public final class MinigameManager {
                 continue;
             }
 
-            player.teleportTo(level, x + 0.5, y, z + 0.5, player.getYRot(), player.getXRot());
-            player.setDeltaMovement(0.0, 0.0, 0.0);
+            validCandidates++;
+            double separationSq = Double.POSITIVE_INFINITY;
+            for (BlockPos previous : RANDOM_SPAWN_POINTS) {
+                double dx = feet.getX() - previous.getX();
+                double dz = feet.getZ() - previous.getZ();
+                separationSq = Math.min(separationSq, dx * dx + dz * dz);
+            }
+
+            if (bestSpawn == null || separationSq > bestSeparationSq) {
+                bestSpawn = feet;
+                bestSeparationSq = separationSq;
+            }
+
+            // The first player has nobody to separate from, so the first safe roll is
+            // already a valid random annulus spawn.
+            if (RANDOM_SPAWN_POINTS.isEmpty()) {
+                break;
+            }
+        }
+
+        if (bestSpawn != null) {
+            player.teleportTo(
+                    level,
+                    bestSpawn.getX() + 0.5D,
+                    bestSpawn.getY(),
+                    bestSpawn.getZ() + 0.5D,
+                    player.getYRot(),
+                    player.getXRot()
+            );
+            player.setDeltaMovement(0.0D, 0.0D, 0.0D);
             player.resetFallDistance();
+            RANDOM_SPAWN_POINTS.add(bestSpawn.immutable());
             return true;
         }
 
@@ -981,6 +1023,7 @@ public final class MinigameManager {
         DAMAGE_DEALT.clear();
         DAMAGE_TAKEN.clear();
         KILLS.clear();
+        RANDOM_SPAWN_POINTS.clear();
     }
 
     private static void pauseMatchInternal(MinecraftServer server, ServerPlayer trigger, boolean recoveredAfterRestart, boolean automaticHostPause) {
@@ -1819,18 +1862,16 @@ public final class MinigameManager {
         Objective results = scoreboard.addObjective(
                 "ma_results",
                 ObjectiveCriteria.DUMMY,
-                Component.literal("Final Results"),
+                Component.literal("Kills"),
                 ObjectiveCriteria.RenderType.INTEGER,
                 false,
-                BlankFormat.INSTANCE
+                null
         );
 
         List<UUID> players = new ArrayList<>(MATCH_PARTICIPANTS);
         players.sort((left, right) -> {
             int kills = Integer.compare(KILLS.getOrDefault(right, 0), KILLS.getOrDefault(left, 0));
             if (kills != 0) return kills;
-            int damage = Double.compare(DAMAGE_DEALT.getOrDefault(right, 0.0D), DAMAGE_DEALT.getOrDefault(left, 0.0D));
-            if (damage != 0) return damage;
             return participantName(server, left).compareToIgnoreCase(participantName(server, right));
         });
 
@@ -1838,23 +1879,12 @@ public final class MinigameManager {
         for (UUID playerId : players) {
             String name = participantName(server, playerId);
             int kills = KILLS.getOrDefault(playerId, 0);
-            int dealt = Math.max(0, (int) Math.round(DAMAGE_DEALT.getOrDefault(playerId, 0.0D)));
-            int taken = Math.max(0, (int) Math.round(DAMAGE_TAKEN.getOrDefault(playerId, 0.0D)));
 
-            ChatFormatting playerColor = participantColor(playerId);
-            Component line = Component.literal(name).withStyle(playerColor)
-                    .append(Component.literal("  K:").withStyle(ChatFormatting.GRAY))
-                    .append(Component.literal(Integer.toString(kills)).withStyle(ChatFormatting.WHITE))
-                    .append(Component.literal("  Done:").withStyle(ChatFormatting.GRAY))
-                    .append(Component.literal(Integer.toString(dealt)).withStyle(ChatFormatting.WHITE))
-                    .append(Component.literal("  Taken:").withStyle(ChatFormatting.GRAY))
-                    .append(Component.literal(Integer.toString(taken)).withStyle(ChatFormatting.WHITE));
-
+            Component line = Component.literal(name).withStyle(participantColor(playerId));
             ScoreHolder row = ScoreHolder.forNameOnly("ma_result_" + index);
             ScoreAccess score = scoreboard.getOrCreatePlayerScore(row, results);
-            score.set(1000 - index);
+            score.set(kills);
             score.display(line);
-            score.numberFormatOverride(BlankFormat.INSTANCE);
             index++;
             if (index >= 15) {
                 break;
