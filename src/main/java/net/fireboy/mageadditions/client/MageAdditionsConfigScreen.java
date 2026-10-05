@@ -30,7 +30,7 @@ public final class MageAdditionsConfigScreen extends Screen {
     protected void init() {
         int width = contentWidth();
         int left = this.width / 2 - width / 2;
-        int y = 58;
+        int y = 50;
 
         for (ModuleTab tab : ModuleTab.values()) {
             this.addRenderableWidget(
@@ -38,7 +38,7 @@ public final class MageAdditionsConfigScreen extends Screen {
                             .bounds(left, y, width, BUTTON_HEIGHT)
                             .build()
             );
-            y += 30;
+            y += 25;
         }
 
         this.addRenderableWidget(
@@ -158,6 +158,9 @@ public final class MageAdditionsConfigScreen extends Screen {
                             }
                         }).bounds(left, y, width, CONTROL_HEIGHT).build()
                 );
+                case MINIGAME -> {
+                    // The master switch controls the complete minigame system.
+                }
                 case LOOT_CHANGES -> {
                     // This module only needs its master switch. The supplied
                     // loot-table pack is applied automatically on resource load.
@@ -233,6 +236,9 @@ public final class MageAdditionsConfigScreen extends Screen {
                 case CUSTOM_SPELLS -> Component.literal(
                         "Mage Additions custom spells. Open the manager to configure Piercing, Mace Infusion, Mirror Image, and future custom spells."
                 );
+                case MINIGAME -> Component.literal(
+                        "Master switch for team selection, match setup, protection, borders, scoring, match controls and other minigame features."
+                );
                 case LOOT_CHANGES -> Component.literal(
                         "Uses the custom Iron's loot tables for bookshelves, magic treasure, mage drops, curios, ink, and pyromancer supplies."
                 );
@@ -303,6 +309,7 @@ public final class MageAdditionsConfigScreen extends Screen {
                         enabled,
                         states.spellReworks(),
                         states.customSpells(),
+                        states.minigame(),
                         states.lootChanges(),
                         states.experimental()
                 );
@@ -320,6 +327,7 @@ public final class MageAdditionsConfigScreen extends Screen {
                         states.balanceTweaks(),
                         enabled,
                         states.customSpells(),
+                        states.minigame(),
                         states.lootChanges(),
                         states.experimental()
                 );
@@ -336,6 +344,25 @@ public final class MageAdditionsConfigScreen extends Screen {
                 return new CastTimeOverrides.ModuleStates(
                         states.balanceTweaks(),
                         states.spellReworks(),
+                        enabled,
+                        states.minigame(),
+                        states.lootChanges(),
+                        states.experimental()
+                );
+            }
+        },
+        MINIGAME("Minigame") {
+            @Override
+            boolean enabled(CastTimeOverrides.ModuleStates states) {
+                return states.minigame();
+            }
+
+            @Override
+            CastTimeOverrides.ModuleStates withEnabled(CastTimeOverrides.ModuleStates states, boolean enabled) {
+                return new CastTimeOverrides.ModuleStates(
+                        states.balanceTweaks(),
+                        states.spellReworks(),
+                        states.customSpells(),
                         enabled,
                         states.lootChanges(),
                         states.experimental()
@@ -354,6 +381,7 @@ public final class MageAdditionsConfigScreen extends Screen {
                         states.balanceTweaks(),
                         states.spellReworks(),
                         states.customSpells(),
+                        states.minigame(),
                         enabled,
                         states.experimental()
                 );
@@ -371,6 +399,7 @@ public final class MageAdditionsConfigScreen extends Screen {
                         states.balanceTweaks(),
                         states.spellReworks(),
                         states.customSpells(),
+                        states.minigame(),
                         states.lootChanges(),
                         enabled
                 );

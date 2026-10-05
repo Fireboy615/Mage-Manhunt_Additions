@@ -1,5 +1,6 @@
 package net.fireboy.mageadditions.network;
 
+import net.fireboy.mageadditions.config.CastTimeOverrides;
 import net.fireboy.mageadditions.minigame.EquipmentPresetStore;
 import net.fireboy.mageadditions.minigame.MinigameManager;
 import net.fireboy.mageadditions.network.payload.AdminAssignTeamPayload;
@@ -27,6 +28,7 @@ public final class MinigameServerPayloadHandler {
     private MinigameServerPayloadHandler() {}
 
     public static void handle(OpenMinigameMenuRequestPayload payload, IPayloadContext context) {
+        if (!CastTimeOverrides.minigameEnabled()) return;
         if (!(context.player() instanceof ServerPlayer player)) {
             return;
         }
@@ -40,6 +42,7 @@ public final class MinigameServerPayloadHandler {
     }
 
     public static void handle(StartMinigamePayload payload, IPayloadContext context) {
+        if (!CastTimeOverrides.minigameEnabled()) return;
         if (!(context.player() instanceof ServerPlayer player)) {
             return;
         }
@@ -53,12 +56,14 @@ public final class MinigameServerPayloadHandler {
     }
 
     public static void handle(SelectTeamPayload payload, IPayloadContext context) {
+        if (!CastTimeOverrides.minigameEnabled()) return;
         if (context.player() instanceof ServerPlayer player) {
             context.enqueueWork(() -> MinigameManager.selectTeam(player, payload.gameId(), payload.teamId()));
         }
     }
 
     public static void handle(CancelMinigamePayload payload, IPayloadContext context) {
+        if (!CastTimeOverrides.minigameEnabled()) return;
         if (!(context.player() instanceof ServerPlayer player)) {
             return;
         }
@@ -72,6 +77,7 @@ public final class MinigameServerPayloadHandler {
     }
 
     public static void handle(LaunchMinigamePayload payload, IPayloadContext context) {
+        if (!CastTimeOverrides.minigameEnabled()) return;
         if (!(context.player() instanceof ServerPlayer player)) {
             return;
         }
@@ -85,6 +91,7 @@ public final class MinigameServerPayloadHandler {
     }
 
     public static void handle(PauseMinigamePayload payload, IPayloadContext context) {
+        if (!CastTimeOverrides.minigameEnabled()) return;
         if (!(context.player() instanceof ServerPlayer player)) {
             return;
         }
@@ -98,6 +105,7 @@ public final class MinigameServerPayloadHandler {
     }
 
     public static void handle(ContinueMinigamePayload payload, IPayloadContext context) {
+        if (!CastTimeOverrides.minigameEnabled()) return;
         if (!(context.player() instanceof ServerPlayer player)) {
             return;
         }
@@ -111,6 +119,7 @@ public final class MinigameServerPayloadHandler {
     }
 
     public static void handle(RevivePlayerPayload payload, IPayloadContext context) {
+        if (!CastTimeOverrides.minigameEnabled()) return;
         if (!(context.player() instanceof ServerPlayer player)) {
             return;
         }
@@ -124,6 +133,7 @@ public final class MinigameServerPayloadHandler {
     }
 
     public static void handle(AdminAssignTeamPayload payload, IPayloadContext context) {
+        if (!CastTimeOverrides.minigameEnabled()) return;
         if (!(context.player() instanceof ServerPlayer player)) return;
         context.enqueueWork(() -> {
             if (!player.hasPermissions(2)) {
@@ -135,6 +145,7 @@ public final class MinigameServerPayloadHandler {
     }
 
     public static void handle(RandomizeTeamsPayload payload, IPayloadContext context) {
+        if (!CastTimeOverrides.minigameEnabled()) return;
         if (!(context.player() instanceof ServerPlayer player)) return;
         context.enqueueWork(() -> {
             if (!player.hasPermissions(2)) return;
@@ -143,6 +154,7 @@ public final class MinigameServerPayloadHandler {
     }
 
     public static void handle(RequestMatchControlRefreshPayload payload, IPayloadContext context) {
+        if (!CastTimeOverrides.minigameEnabled()) return;
         if (!(context.player() instanceof ServerPlayer player)) return;
         context.enqueueWork(() -> {
             if (player.hasPermissions(2)) MinigameManager.refreshMatchControl(player);
@@ -150,6 +162,7 @@ public final class MinigameServerPayloadHandler {
     }
 
     public static void handle(RequestEquipmentPresetsPayload payload, IPayloadContext context) {
+        if (!CastTimeOverrides.minigameEnabled()) return;
         if (!(context.player() instanceof ServerPlayer player)) return;
         context.enqueueWork(() -> {
             if (!player.hasPermissions(2) || player.getServer() == null) return;
@@ -158,6 +171,7 @@ public final class MinigameServerPayloadHandler {
     }
 
     public static void handle(SaveEquipmentPresetPayload payload, IPayloadContext context) {
+        if (!CastTimeOverrides.minigameEnabled()) return;
         if (!(context.player() instanceof ServerPlayer player)) return;
         context.enqueueWork(() -> {
             if (!player.hasPermissions(2) || player.getServer() == null) return;
@@ -170,6 +184,7 @@ public final class MinigameServerPayloadHandler {
     }
 
     public static void handle(DeleteEquipmentPresetPayload payload, IPayloadContext context) {
+        if (!CastTimeOverrides.minigameEnabled()) return;
         if (!(context.player() instanceof ServerPlayer player)) return;
         context.enqueueWork(() -> {
             if (!player.hasPermissions(2) || player.getServer() == null) return;

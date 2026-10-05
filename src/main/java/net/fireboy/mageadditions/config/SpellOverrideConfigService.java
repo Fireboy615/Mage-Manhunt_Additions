@@ -40,6 +40,44 @@ public final class SpellOverrideConfigService {
         }
     }
 
+    /** Returns the Mage Additions-owned enable flag for one custom spell. */
+    public static boolean readCustomSpellEnabled(String spellId) {
+        try {
+            Document document = readDocument();
+            JsonElement section = document.root.get("custom_spells");
+            if (section == null || !section.isJsonObject()) return true;
+            JsonElement entry = section.getAsJsonObject().get(spellId);
+            if (entry == null || !entry.isJsonObject()) return true;
+            JsonElement enabled = entry.getAsJsonObject().get("enabled");
+            return enabled == null || !enabled.isJsonPrimitive()
+                    || !enabled.getAsJsonPrimitive().isBoolean()
+                    || enabled.getAsBoolean();
+        } catch (Exception ignored) {
+            return true;
+        }
+    }
+
+    /** Persists a custom spell's Enabled toggle without relying on Iron's addon config entry. */
+    public static CastTimeOverrides.ReloadResult saveCustomSpellEnabled(String spellId, boolean enabled) {
+        try {
+            Document document = readDocument();
+            JsonObject custom = document.root.has("custom_spells") && document.root.get("custom_spells").isJsonObject()
+                    ? document.root.getAsJsonObject("custom_spells").deepCopy()
+                    : new JsonObject();
+
+            JsonObject entry = custom.has(spellId) && custom.get(spellId).isJsonObject()
+                    ? custom.getAsJsonObject(spellId).deepCopy()
+                    : new JsonObject();
+            entry.addProperty("enabled", enabled);
+            custom.add(spellId, entry);
+
+            writeTopLevelObject(document.raw, "custom_spells", GSON.toJson(custom));
+            return CastTimeOverrides.reload();
+        } catch (Exception exception) {
+            return new CastTimeOverrides.ReloadResult(false, 0, 0, rootMessage(exception), 0, 0);
+        }
+    }
+
     /**
      * Returns every spell id that has a non-default Mage Additions override.
      * The config document is parsed only once so the spell-manager status
@@ -58,6 +96,19 @@ public final class SpellOverrideConfigService {
             for (Map.Entry<String, CastTimeConfig.SpellBehavior> entry : balance.spell_behavior_overrides.entrySet()) {
                 if (!toBehaviorState(entry.getValue()).isDefault()) {
                     result.add(entry.getKey());
+                }
+            }
+
+            JsonElement customSection = document.root.get("custom_spells");
+            if (customSection != null && customSection.isJsonObject()) {
+                for (Map.Entry<String, JsonElement> entry : customSection.getAsJsonObject().entrySet()) {
+                    if (!entry.getValue().isJsonObject()) continue;
+                    JsonElement enabled = entry.getValue().getAsJsonObject().get("enabled");
+                    if (enabled != null && enabled.isJsonPrimitive()
+                            && enabled.getAsJsonPrimitive().isBoolean()
+                            && !enabled.getAsBoolean()) {
+                        result.add(entry.getKey());
+                    }
                 }
             }
             return Set.copyOf(result);

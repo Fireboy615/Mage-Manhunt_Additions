@@ -100,17 +100,20 @@ public final class CastTimeOverrides {
                 net.fireboy.mageadditions.rework.FeatherFlightRework.reload(disabledFeatherFlight());
             }
 
+            Map<String, Boolean> customSpellEnabledStates = readCustomSpellEnabledStates(root);
             int maxTicks = Math.max(0, balance.settings.max_cast_time_ticks);
             snapshot = new Snapshot(
                     Map.copyOf(castTime.rules),
                     Map.copyOf(mana.rules),
                     Map.copyOf(cooldown.rules),
                     Map.copyOf(behaviors.rules),
+                    Map.copyOf(customSpellEnabledStates),
                     balance.settings.allow_instant_spell_delays,
                     maxTicks,
                     modules.balance_tweaks,
                     modules.spell_reworks,
                     modules.custom_spells,
+                    modules.minigame,
                     modules.loot_changes,
                     modules.experimental
             );
@@ -118,11 +121,12 @@ public final class CastTimeOverrides {
             int skipped = castTime.skipped + mana.skipped + cooldown.skipped + behaviors.skipped;
 
             MageAdditions.LOGGER.info(
-                    "Loaded Mage Additions config from {}: modules [balance={}, reworks={}, customSpells={}, lootChanges={}, experimental={}], rules [{} cast-time, {} mana, {} cooldown] ({} skipped)",
+                    "Loaded Mage Additions config from {}: modules [balance={}, reworks={}, customSpells={}, minigame={}, lootChanges={}, experimental={}], rules [{} cast-time, {} mana, {} cooldown] ({} skipped)",
                     CONFIG_PATH,
                     onOff(modules.balance_tweaks),
                     onOff(modules.spell_reworks),
                     onOff(modules.custom_spells),
+                    onOff(modules.minigame),
                     onOff(modules.loot_changes),
                     onOff(modules.experimental),
                     castTime.rules.size(),
@@ -372,6 +376,7 @@ public final class CastTimeOverrides {
                 current.balanceTweaksEnabled,
                 current.spellReworksEnabled,
                 current.customSpellsEnabled,
+                current.minigameEnabled,
                 current.lootChangesEnabled,
                 current.experimentalEnabled
         );
@@ -430,6 +435,26 @@ public final class CastTimeOverrides {
         return snapshot.customSpellsEnabled;
     }
 
+    public static boolean minigameEnabled() {
+        return snapshot.minigameEnabled;
+    }
+
+    /** Per-spell setting only; does not include the custom-spells module master switch. */
+    public static boolean customSpellSettingEnabled(AbstractSpell spell) {
+        if (spell == null || !MageAdditions.MODID.equals(spell.getSpellResource().getNamespace())) {
+            return true;
+        }
+        return snapshot.customSpellEnabledStates.getOrDefault(spell.getSpellId(), true);
+    }
+
+    /** Authoritative runtime gate for Mage Additions custom spells; non-custom spells always pass. */
+    public static boolean customSpellUsable(AbstractSpell spell) {
+        if (spell == null || !MageAdditions.MODID.equals(spell.getSpellResource().getNamespace())) {
+            return true;
+        }
+        return customSpellsEnabled() && customSpellSettingEnabled(spell);
+    }
+
     public static boolean lootChangesEnabled() {
         return snapshot.lootChangesEnabled;
     }
@@ -443,6 +468,7 @@ public final class CastTimeOverrides {
         return "balance=" + onOff(current.balanceTweaksEnabled)
                 + ", reworks=" + onOff(current.spellReworksEnabled)
                 + ", custom_spells=" + onOff(current.customSpellsEnabled)
+                + ", minigame=" + onOff(current.minigameEnabled)
                 + ", loot_changes=" + onOff(current.lootChangesEnabled)
                 + ", experimental=" + onOff(current.experimentalEnabled);
     }
@@ -453,6 +479,25 @@ public final class CastTimeOverrides {
 
     public static Path examplePath() {
         return EXAMPLE_PATH;
+    }
+
+    private static Map<String, Boolean> readCustomSpellEnabledStates(JsonObject root) {
+        Map<String, Boolean> result = new LinkedHashMap<>();
+        JsonElement section = root.get("custom_spells");
+        if (section == null || !section.isJsonObject()) {
+            return result;
+        }
+
+        for (Map.Entry<String, JsonElement> entry : section.getAsJsonObject().entrySet()) {
+            if (ResourceLocation.tryParse(entry.getKey()) == null || !entry.getValue().isJsonObject()) {
+                continue;
+            }
+            JsonElement enabled = entry.getValue().getAsJsonObject().get("enabled");
+            if (enabled != null && enabled.isJsonPrimitive() && enabled.getAsJsonPrimitive().isBoolean()) {
+                result.put(entry.getKey(), enabled.getAsBoolean());
+            }
+        }
+        return result;
     }
 
     private static BalanceSource readBalanceSource(JsonObject root, CastTimeConfig config) {
@@ -761,6 +806,7 @@ public final class CastTimeOverrides {
                 + "    \"balance_tweaks\": " + states.balanceTweaks() + ",\n"
                 + "    \"spell_reworks\": " + states.spellReworks() + ",\n"
                 + "    \"custom_spells\": " + states.customSpells() + ",\n"
+                + "    \"minigame\": " + states.minigame() + ",\n"
                 + "    \"loot_changes\": " + states.lootChanges() + ",\n"
                 + "    \"experimental\": " + states.experimental() + "\n"
                 + "  }";
@@ -1048,10 +1094,12 @@ public final class CastTimeOverrides {
                 // Rewrites of existing Iron's spells, such as Counterspell.
                 "spell_reworks": true,
 
-                // Reserved for spells added by Mage Additions itself.
-                // This switch does not control anything yet; it is here now so
-                // future custom spells already have a clean master toggle.
+                // Spells added by Mage Additions itself.
                 "custom_spells": true,
+
+                // Team selection, match setup, protection, borders and all other
+                // native Mage Additions minigame behaviour.
+                "minigame": true,
 
                 // Custom Iron's loot tables supplied by Mage Additions.
                 // Turning this off restores Iron's normal loot tables after
@@ -1241,9 +1289,12 @@ public final class CastTimeOverrides {
               // ================================================================
               // CUSTOM SPELLS MODULE
               // ================================================================
-              // Reserved for new Mage Additions spells. No custom spells are
-              // registered yet, so changing values here currently does nothing.
+              // Per-spell enable state for Mage Additions' own spells. Missing
+              // entries default to enabled.
               "custom_spells": {
+                // "mageadditions:piercing": {
+                //   "enabled": false
+                // }
               },
 
               // ================================================================
@@ -1408,11 +1459,13 @@ public final class CastTimeOverrides {
             Map<String, CompiledRule> manaCostRules,
             Map<String, CompiledRule> cooldownRules,
             Map<String, BehaviorSettings> behaviorRules,
+            Map<String, Boolean> customSpellEnabledStates,
             boolean allowInstantSpellDelays,
             int maxCastTimeTicks,
             boolean balanceTweaksEnabled,
             boolean spellReworksEnabled,
             boolean customSpellsEnabled,
+            boolean minigameEnabled,
             boolean lootChangesEnabled,
             boolean experimentalEnabled
     ) {
@@ -1422,8 +1475,10 @@ public final class CastTimeOverrides {
                     Map.of(),
                     Map.of(),
                     Map.of(),
+                    Map.of(),
                     false,
                     72_000,
+                    true,
                     true,
                     true,
                     true,
@@ -1438,11 +1493,12 @@ public final class CastTimeOverrides {
             boolean balanceTweaks,
             boolean spellReworks,
             boolean customSpells,
+            boolean minigame,
             boolean lootChanges,
             boolean experimental
     ) {
         public static ModuleStates defaults() {
-            return new ModuleStates(true, true, true, true, false);
+            return new ModuleStates(true, true, true, true, true, false);
         }
     }
 

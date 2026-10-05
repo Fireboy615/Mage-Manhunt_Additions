@@ -26,6 +26,7 @@
   ],
   "client": [
     "AbstractSpellClientMixin",
+    "TooltipsUtilsMixin",
     "MinecraftGlowMixin",
     "LevelRendererOutlineColorMixin",
     "CreativeModeTabsAccessor",

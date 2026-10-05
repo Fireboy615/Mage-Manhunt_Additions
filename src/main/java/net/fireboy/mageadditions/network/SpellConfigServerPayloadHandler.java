@@ -4,6 +4,7 @@ import io.redspace.ironsspellbooks.api.registry.SchoolRegistry;
 import io.redspace.ironsspellbooks.api.registry.SpellRegistry;
 import io.redspace.ironsspellbooks.api.spells.AbstractSpell;
 import io.redspace.ironsspellbooks.api.spells.SpellRarity;
+import net.fireboy.mageadditions.MageAdditions;
 import net.fireboy.mageadditions.compat.irons.IronsSpellConfigBridge;
 import net.fireboy.mageadditions.config.CastTimeOverrides;
 import net.fireboy.mageadditions.config.SpellOverrideConfigService;
@@ -92,19 +93,39 @@ public final class SpellConfigServerPayloadHandler {
                     payload.allowCrafting()
             );
 
-            IronsSpellConfigBridge.SaveResult ironResult = IronsSpellConfigBridge.saveLive(spell, ironSettings);
-            if (!ironResult.success()) {
-                context.reply(snapshot(
-                        spell,
-                        player,
-                        false,
-                        "Iron's config update failed: " + ironResult.error()
-                ));
-                return;
-            }
+            boolean mageCustomSpell = isMageCustomSpell(spell);
+            if (mageCustomSpell) {
+                // Iron's 3.14 builds its mutable spell-config table before addon
+                // spells are registered, so Mage Additions spells have no writable
+                // Iron config entry. Persist the fields we own and leave Iron's
+                // unsupported addon-only fields untouched rather than rejecting
+                // the entire save request.
+                CastTimeOverrides.ReloadResult customResult =
+                        SpellOverrideConfigService.saveCustomSpellEnabled(spell.getSpellId(), payload.enabled());
+                if (!customResult.success()) {
+                    context.reply(snapshot(
+                            spell,
+                            player,
+                            false,
+                            "Custom spell Enabled setting failed to save: " + customResult.error()
+                    ));
+                    return;
+                }
+            } else {
+                IronsSpellConfigBridge.SaveResult ironResult = IronsSpellConfigBridge.saveLive(spell, ironSettings);
+                if (!ironResult.success()) {
+                    context.reply(snapshot(
+                            spell,
+                            player,
+                            false,
+                            "Iron's config update failed: " + ironResult.error()
+                    ));
+                    return;
+                }
 
-            // Keep every connected client aligned with the server's live Iron's values.
-            SpellConfigSyncService.broadcast(spell);
+                // Keep every connected client aligned with the server's live Iron's values.
+                SpellConfigSyncService.broadcast(spell);
+            }
 
             SpellOverrideConfigService.RuleState castRule = toRule(payload.castMode(), payload.castValue());
             SpellOverrideConfigService.BehaviorState behavior = new SpellOverrideConfigService.BehaviorState(
@@ -157,6 +178,9 @@ public final class SpellConfigServerPayloadHandler {
             String message
     ) {
         IronsSpellConfigBridge.Settings iron = IronsSpellConfigBridge.read(spell);
+        boolean displayedEnabled = isMageCustomSpell(spell)
+                ? SpellOverrideConfigService.readCustomSpellEnabled(spell.getSpellId())
+                : iron.enabled();
         SpellOverrideConfigService.SpellRules mage = SpellOverrideConfigService.readSpellRules(spell.getSpellId());
         IronsSpellConfigBridge.BackendInfo backend = IronsSpellConfigBridge.backendInfo();
 
@@ -193,7 +217,7 @@ public final class SpellConfigServerPayloadHandler {
                 resolvedMessage,
                 editable,
                 backend.name(),
-                iron.enabled(),
+                displayedEnabled,
                 iron.school(),
                 iron.maxLevel(),
                 iron.minRarity().name(),
@@ -322,13 +346,24 @@ public final class SpellConfigServerPayloadHandler {
             IronsSpellConfigBridge.Settings right
     ) {
         return left.enabled() == right.enabled()
-                && left.school().equals(right.school())
+                && sameSettingsExceptEnabled(left, right);
+    }
+
+    private static boolean sameSettingsExceptEnabled(
+            IronsSpellConfigBridge.Settings left,
+            IronsSpellConfigBridge.Settings right
+    ) {
+        return left.school().equals(right.school())
                 && left.maxLevel() == right.maxLevel()
                 && left.minRarity() == right.minRarity()
                 && Double.compare(left.manaMultiplier(), right.manaMultiplier()) == 0
                 && Double.compare(left.powerMultiplier(), right.powerMultiplier()) == 0
                 && Double.compare(left.cooldownSeconds(), right.cooldownSeconds()) == 0
                 && left.allowCrafting() == right.allowCrafting();
+    }
+
+    private static boolean isMageCustomSpell(AbstractSpell spell) {
+        return spell != null && MageAdditions.MODID.equals(spell.getSpellResource().getNamespace());
     }
 
     private static AbstractSpell findSpell(ResourceLocation id) {

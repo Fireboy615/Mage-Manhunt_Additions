@@ -2,6 +2,7 @@ package net.fireboy.mageadditions.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import net.fireboy.mageadditions.client.state.ClientCaptureState;
+import net.fireboy.mageadditions.config.CastTimeOverrides;
 import net.fireboy.mageadditions.network.payload.OpenMinigameMenuRequestPayload;
 import net.fireboy.mageadditions.network.payload.MirrorMovementInputPayload;
 import net.fireboy.mageadditions.network.payload.CaptureStrugglePayload;
@@ -71,7 +72,8 @@ public final class ClientMinigameEvents {
         }
 
         while (OPEN_MINIGAME_MENU.consumeClick()) {
-            if (minecraft.player != null && minecraft.getConnection() != null && minecraft.screen == null) {
+            if (CastTimeOverrides.minigameEnabled()
+                    && minecraft.player != null && minecraft.getConnection() != null && minecraft.screen == null) {
                 PacketDistributor.sendToServer(OpenMinigameMenuRequestPayload.INSTANCE);
             }
         }

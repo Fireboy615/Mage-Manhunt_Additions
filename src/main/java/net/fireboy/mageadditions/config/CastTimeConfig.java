@@ -11,7 +11,8 @@ import java.util.Map;
  * modules -> master switches
  * balance_tweaks -> cast time / mana / cooldown
  * spell_reworks -> Counterspell and future vanilla-Iron's reworks
- * custom_spells -> reserved for Mage Additions spells
+ * custom_spells -> Mage Additions spell enable/disable settings
+ * minigame -> native minigame feature master switch
  * loot_changes -> custom Iron's loot-table replacements
  * experimental -> reserved for unfinished/opt-in mechanics
  *
@@ -40,8 +41,11 @@ public final class CastTimeConfig {
         /** Master switch for Counterspell and future existing-spell rewrites. */
         public boolean spell_reworks = true;
 
-        /** Master switch reserved for Mage Additions custom spells. */
+        /** Master switch for Mage Additions custom spells. */
         public boolean custom_spells = true;
+
+        /** Master switch for every native minigame feature. */
+        public boolean minigame = true;
 
         /** Master switch for the custom Iron's loot-table replacement pack. */
         public boolean loot_changes = true;

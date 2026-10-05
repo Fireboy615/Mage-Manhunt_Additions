@@ -242,6 +242,43 @@ public final class MinigameManager {
         cancelCurrentSession(operator);
     }
 
+    /**
+     * Removes every persistent/runtime effect owned by the minigame module.
+     * Used by the master config switch, including when it is disabled mid-match.
+     */
+    public static void disableSystem(MinecraftServer server) {
+        if (server == null) return;
+
+        boolean hadRunningArena = phase == Phase.RUNNING || phase == Phase.PAUSED;
+        boolean hadActiveSession = phase != Phase.IDLE;
+        unfreezeGameTicks(server);
+        runServerCommand(server, "gamerule doDaylightCycle true");
+        runServerCommand(server, "gamerule keepInventory false");
+        setPvp(server, true);
+        clearMatchScoreboard(server);
+        if (hadRunningArena) {
+            restoreDefaultWorldBorder(server);
+        }
+        revokePracticeOps(server);
+
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            PacketDistributor.sendToPlayer(player, CloseTeamSelectionPayload.INSTANCE);
+            PacketDistributor.sendToPlayer(player, new TeamOutlinePayload(false, List.of()));
+            removeFromAnyTeam(player);
+
+            // IDLE/LOBBY normally force Adventure and eliminated/paused players
+            // may be Spectators. With the whole minigame module disabled, return
+            // those module-owned modes to ordinary Survival gameplay.
+            GameType mode = player.gameMode.getGameModeForPlayer();
+            if (hadActiveSession || mode == GameType.ADVENTURE || mode == GameType.SPECTATOR) {
+                player.setGameMode(GameType.SURVIVAL);
+            }
+        }
+
+        reset();
+        MinigameSessionStore.delete(server);
+    }
+
     public static void launchMatch(ServerPlayer operator) {
         MinecraftServer server = operator.getServer();
         MinigameDefinition game = activeDefinition();

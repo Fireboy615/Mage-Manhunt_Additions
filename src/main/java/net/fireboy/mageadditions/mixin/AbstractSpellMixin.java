@@ -30,6 +30,14 @@ import java.util.Optional;
 @Mixin(value = AbstractSpell.class, remap = false)
 public abstract class AbstractSpellMixin {
 
+    @Inject(method = "isEnabled", at = @At("HEAD"), cancellable = true, remap = false)
+    private void mageAdditions$customSpellEnabled(CallbackInfoReturnable<Boolean> cir) {
+        AbstractSpell spell = (AbstractSpell) (Object) this;
+        if (!CastTimeOverrides.customSpellUsable(spell)) {
+            cir.setReturnValue(false);
+        }
+    }
+
     @Redirect(
             method = "attemptInitiateCast",
             at = @At(
@@ -108,6 +116,11 @@ public abstract class AbstractSpellMixin {
             LivingEntity caster,
             MagicData playerMagicData
     ) {
+        if (!CastTimeOverrides.customSpellUsable(spell)) {
+            sendFailure(caster, "This Mage Additions spell is disabled.");
+            return false;
+        }
+
         CastTimeOverrides.BehaviorSettings behavior = CastTimeOverrides.behavior(spell);
 
         Double maxHeight = behavior.maxHeightAboveGround();

@@ -48,6 +48,10 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class GenericSpellOverrideServerEvents {
     private static final Map<UUID, String> SOURCE_SPELLS = new ConcurrentHashMap<>();
     private static final Map<UUID, RecentCast> RECENT_CASTS = new ConcurrentHashMap<>();
+    // Some Iron's self-buffs add their effect a tick or two after SpellOnCastEvent,
+    // especially at different spell levels. Keep attribution briefly rather than
+    // requiring the effect to be created on the exact same server tick.
+    private static final int RECENT_CAST_CONTEXT_TICKS = 3;
     private static final List<PendingEffectDuration> PENDING_EFFECT_DURATIONS = new ArrayList<>();
     private static final Map<UUID, PendingKnockback> PENDING_KNOCKBACK = new ConcurrentHashMap<>();
     private static final double MIN_KNOCKBACK_VECTOR_SQR = 1.0E-5D;
@@ -309,7 +313,7 @@ public final class GenericSpellOverrideServerEvents {
 
     public static void onServerTickPost(ServerTickEvent.Post event) {
         MinecraftServer server = event.getServer();
-        int staleBefore = server.getTickCount() - 1;
+        int staleBefore = server.getTickCount() - RECENT_CAST_CONTEXT_TICKS;
         RECENT_CASTS.entrySet().removeIf(entry -> entry.getValue().serverTick() < staleBefore);
         processPendingEffectDurations();
         processPendingKnockbackFallbacks();
@@ -802,7 +806,9 @@ public final class GenericSpellOverrideServerEvents {
         MinecraftServer server = player.getServer();
         if (server == null) return null;
         RecentCast recent = RECENT_CASTS.get(player.getUUID());
-        if (recent == null || recent.serverTick() != server.getTickCount()) return null;
+        if (recent == null) return null;
+        int age = server.getTickCount() - recent.serverTick();
+        if (age < 0 || age > RECENT_CAST_CONTEXT_TICKS) return null;
         return recent.spell();
     }
 
