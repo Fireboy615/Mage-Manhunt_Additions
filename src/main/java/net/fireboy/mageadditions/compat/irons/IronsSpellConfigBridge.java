@@ -471,6 +471,11 @@ public final class IronsSpellConfigBridge {
         }
     }
 
+    /** Rebuilds Iron's cached enabled/school spell lists after Mage Additions-owned state changes. */
+    public static void refreshRegistryCache() {
+        invalidateRegistryCache();
+    }
+
     private static void invalidateRegistryCache() {
         // 3.14.x caches spell lists by school in SpellRegistry. Call this only
         // when the method exists so a future removal does not become a hard link.

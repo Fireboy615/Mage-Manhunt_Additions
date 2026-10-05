@@ -7,6 +7,7 @@ import net.fireboy.mageadditions.MageAdditions;
 import net.fireboy.mageadditions.client.SpellEditorScreen;
 import net.fireboy.mageadditions.client.SpellManagerScreen;
 import net.fireboy.mageadditions.compat.irons.IronsSpellConfigBridge;
+import net.fireboy.mageadditions.config.CastTimeOverrides;
 import net.fireboy.mageadditions.mixin.CreativeModeTabsAccessor;
 import net.minecraft.client.Minecraft;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
@@ -44,11 +45,21 @@ public final class SpellConfigClientPayloadHandler {
 
     private static void applyRuntimeSync(SpellConfigPayloads.RuntimeSync payload) {
         Map<AbstractSpell, IronsSpellConfigBridge.Settings> updates = new LinkedHashMap<>();
+        boolean appliedCustomState = false;
 
         for (SpellConfigPayloads.RuntimeEntry entry : payload.entries()) {
             AbstractSpell spell = SpellRegistry.getSpell(entry.spellId());
             if (spell == null || spell == SpellRegistry.none()) {
                 MageAdditions.LOGGER.debug("Ignoring runtime config for unknown spell {}", entry.spellId());
+                continue;
+            }
+
+            if (MageAdditions.MODID.equals(entry.spellId().getNamespace())) {
+                // Iron's 3.14 has no mutable config entry for addon spells. Their
+                // effective Enabled state is synchronized through Mage Additions
+                // instead, so isEnabled() changes immediately without reconnecting.
+                CastTimeOverrides.setSyncedCustomSpellUsable(entry.spellId(), entry.enabled());
+                appliedCustomState = true;
                 continue;
             }
 
@@ -72,13 +83,19 @@ public final class SpellConfigClientPayloadHandler {
             ));
         }
 
-        if (updates.isEmpty()) {
-            return;
+        if (!updates.isEmpty()) {
+            IronsSpellConfigBridge.SaveResult result = IronsSpellConfigBridge.applyRuntimeBatch(updates);
+            if (!result.success()) {
+                MageAdditions.LOGGER.warn("Could not apply server spell runtime sync: {}", result.error());
+                return;
+            }
+            // applyRuntimeBatch already rebuilds Iron's registry cache after the
+            // synchronized custom states above have been installed.
+        } else if (appliedCustomState) {
+            IronsSpellConfigBridge.refreshRegistryCache();
         }
 
-        IronsSpellConfigBridge.SaveResult result = IronsSpellConfigBridge.applyRuntimeBatch(updates);
-        if (!result.success()) {
-            MageAdditions.LOGGER.warn("Could not apply server spell runtime sync: {}", result.error());
+        if (updates.isEmpty() && !appliedCustomState) {
             return;
         }
 

@@ -111,6 +111,10 @@ public final class SpellConfigServerPayloadHandler {
                     ));
                     return;
                 }
+
+                // Push the effective custom-spell state immediately so clients
+                // rebuild availability/creative caches without reconnecting.
+                SpellConfigSyncService.broadcast(spell);
             } else {
                 IronsSpellConfigBridge.SaveResult ironResult = IronsSpellConfigBridge.saveLive(spell, ironSettings);
                 if (!ironResult.success()) {

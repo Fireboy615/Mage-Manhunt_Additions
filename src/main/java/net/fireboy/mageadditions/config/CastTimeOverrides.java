@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Loads Mage Additions' modular config and resolves generic per-spell overrides.
@@ -34,6 +35,14 @@ public final class CastTimeOverrides {
     private static final int MAX_COOLDOWN_TICKS = 72_000; // one hour at 20 TPS
 
     private static volatile Snapshot snapshot = Snapshot.defaults();
+
+    /**
+     * Effective custom-spell state received from the authoritative server.
+     * Dedicated clients cannot read the server's mage_additions.json, so this
+     * cache overrides the local snapshot while connected. Integrated servers
+     * share the same JVM, but receive the same value, so the result is identical.
+     */
+    private static final Map<String, Boolean> SYNCED_CUSTOM_SPELL_USABLE = new ConcurrentHashMap<>();
 
     private CastTimeOverrides() {}
 
@@ -447,10 +456,31 @@ public final class CastTimeOverrides {
         return snapshot.customSpellEnabledStates.getOrDefault(spell.getSpellId(), true);
     }
 
+    /**
+     * Updates the effective state received from the connected server. This is
+     * deliberately separate from the on-disk snapshot because a dedicated
+     * client's local config is not authoritative for server spell availability.
+     */
+    public static void setSyncedCustomSpellUsable(ResourceLocation spellId, boolean usable) {
+        if (spellId == null || !MageAdditions.MODID.equals(spellId.getNamespace())) {
+            return;
+        }
+        SYNCED_CUSTOM_SPELL_USABLE.put(spellId.toString(), usable);
+    }
+
+    public static void clearSyncedCustomSpellUsable() {
+        SYNCED_CUSTOM_SPELL_USABLE.clear();
+    }
+
     /** Authoritative runtime gate for Mage Additions custom spells; non-custom spells always pass. */
     public static boolean customSpellUsable(AbstractSpell spell) {
         if (spell == null || !MageAdditions.MODID.equals(spell.getSpellResource().getNamespace())) {
             return true;
+        }
+
+        Boolean synced = SYNCED_CUSTOM_SPELL_USABLE.get(spell.getSpellId());
+        if (synced != null) {
+            return synced;
         }
         return customSpellsEnabled() && customSpellSettingEnabled(spell);
     }

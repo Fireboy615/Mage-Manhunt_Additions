@@ -2,7 +2,9 @@ package net.fireboy.mageadditions.network;
 
 import io.redspace.ironsspellbooks.api.registry.SpellRegistry;
 import io.redspace.ironsspellbooks.api.spells.AbstractSpell;
+import net.fireboy.mageadditions.MageAdditions;
 import net.fireboy.mageadditions.compat.irons.IronsSpellConfigBridge;
+import net.fireboy.mageadditions.config.CastTimeOverrides;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.PacketDistributor;
 
@@ -27,9 +29,12 @@ public final class SpellConfigSyncService {
 
     private static SpellConfigPayloads.RuntimeEntry toEntry(AbstractSpell spell) {
         IronsSpellConfigBridge.Settings settings = IronsSpellConfigBridge.read(spell);
+        boolean enabled = MageAdditions.MODID.equals(spell.getSpellResource().getNamespace())
+                ? CastTimeOverrides.customSpellsEnabled() && CastTimeOverrides.customSpellSettingEnabled(spell)
+                : settings.enabled();
         return new SpellConfigPayloads.RuntimeEntry(
                 spell.getSpellResource(),
-                settings.enabled(),
+                enabled,
                 settings.school(),
                 settings.maxLevel(),
                 settings.minRarity().name(),

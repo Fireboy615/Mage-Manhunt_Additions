@@ -39,6 +39,12 @@ public final class ClientMinigameEvents {
     public static void onClientTick(ClientTickEvent.Post event) {
         Minecraft minecraft = Minecraft.getInstance();
 
+        if (minecraft.getConnection() == null) {
+            // Do not carry one server's authoritative custom-spell availability
+            // into the next connection. Login runtime sync repopulates this cache.
+            CastTimeOverrides.clearSyncedCustomSpellUsable();
+        }
+
         if (minecraft.player == null || minecraft.getConnection() == null) {
             ClientCaptureState.setCaptured(false);
         } else {
