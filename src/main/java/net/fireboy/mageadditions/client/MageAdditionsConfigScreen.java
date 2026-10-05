@@ -89,15 +89,19 @@ public final class MageAdditionsConfigScreen extends Screen {
         private final ModuleTab tab;
 
         private boolean enabled;
+        private boolean wizardArmorToughness;
         private boolean readOnlyRemoteServer;
         private Button enabledButton;
+        private Button wizardArmorToughnessButton;
         private Component status = Component.empty();
 
         private ModuleConfigScreen(Screen parent, ModuleTab tab) {
             super(Component.literal(tab.displayName));
             this.parent = parent;
             this.tab = tab;
-            this.enabled = tab.enabled(CastTimeOverrides.moduleStates());
+            CastTimeOverrides.ModuleStates states = CastTimeOverrides.moduleStates();
+            this.enabled = tab.enabled(states);
+            this.wizardArmorToughness = states.wizardArmorToughness();
         }
 
         @Override
@@ -108,7 +112,9 @@ public final class MageAdditionsConfigScreen extends Screen {
 
             // Refresh from the authoritative local snapshot each time this page
             // is reopened, including after returning from one of its editors.
-            this.enabled = this.tab.enabled(CastTimeOverrides.moduleStates());
+            CastTimeOverrides.ModuleStates states = CastTimeOverrides.moduleStates();
+            this.enabled = this.tab.enabled(states);
+            this.wizardArmorToughness = states.wizardArmorToughness();
 
             int width = Math.min(CONTENT_WIDTH, Math.max(220, this.width - 40));
             int left = this.width / 2 - width / 2;
@@ -124,13 +130,21 @@ public final class MageAdditionsConfigScreen extends Screen {
 
             y += 42;
             switch (this.tab) {
-                case BALANCE_TWEAKS -> this.addRenderableWidget(
-                        Button.builder(Component.literal("Open Spell Manager"), button -> {
-                            if (this.minecraft != null) {
-                                this.minecraft.setScreen(new SpellManagerScreen(this));
-                            }
-                        }).bounds(left, y, width, CONTROL_HEIGHT).build()
-                );
+                case BALANCE_TWEAKS -> {
+                    this.addRenderableWidget(
+                            Button.builder(Component.literal("Open Spell Manager"), button -> {
+                                if (this.minecraft != null) {
+                                    this.minecraft.setScreen(new SpellManagerScreen(this));
+                                }
+                            }).bounds(left, y, width, CONTROL_HEIGHT).build()
+                    );
+                    this.wizardArmorToughnessButton = this.addRenderableWidget(
+                            Button.builder(wizardArmorToughnessLabel(), button -> toggleWizardArmorToughness())
+                                    .bounds(left, y + 30, width, CONTROL_HEIGHT)
+                                    .build()
+                    );
+                    this.wizardArmorToughnessButton.active = !this.readOnlyRemoteServer;
+                }
                 case SPELL_REWORKS -> {
                     int reworkY = y;
                     for (ReworkEditorRegistry.Entry entry : ReworkEditorRegistry.entries()) {
@@ -160,6 +174,10 @@ public final class MageAdditionsConfigScreen extends Screen {
                 );
                 case MINIGAME -> {
                     // The master switch controls the complete minigame system.
+                }
+                case SERVER_ADDITIONS -> {
+                    // Domain-specific shape/radius testing currently lives in
+                    // config/mage_additions_domain.json; this is the master switch.
                 }
                 case LOOT_CHANGES -> {
                     // This module only needs its master switch. The supplied
@@ -212,6 +230,43 @@ public final class MageAdditionsConfigScreen extends Screen {
             }
         }
 
+        private Component wizardArmorToughnessLabel() {
+            return moduleLabel("Wizard Armour Toughness", this.wizardArmorToughness);
+        }
+
+        private void toggleWizardArmorToughness() {
+            boolean previous = this.wizardArmorToughness;
+            this.wizardArmorToughness = !this.wizardArmorToughness;
+
+            CastTimeOverrides.ModuleStates current = CastTimeOverrides.moduleStates();
+            CastTimeOverrides.ModuleStates updated = new CastTimeOverrides.ModuleStates(
+                    current.balanceTweaks(),
+                    current.spellReworks(),
+                    current.customSpells(),
+                    current.minigame(),
+                    current.serverAdditions(),
+                    this.wizardArmorToughness,
+                    current.lootChanges(),
+                    current.experimental()
+            );
+            CastTimeOverrides.ReloadResult result = CastTimeOverrides.saveModuleStates(updated);
+
+            if (!result.success()) {
+                this.wizardArmorToughness = previous;
+                String error = result.error() == null ? "Unknown error" : result.error();
+                this.status = Component.literal("Could not save: " + error).withStyle(ChatFormatting.RED);
+            } else {
+                this.status = Component.literal(
+                                "Wizard Armour Toughness " + (this.wizardArmorToughness ? "enabled." : "disabled.")
+                        )
+                        .withStyle(this.wizardArmorToughness ? ChatFormatting.GREEN : ChatFormatting.YELLOW);
+            }
+
+            if (this.wizardArmorToughnessButton != null) {
+                this.wizardArmorToughnessButton.setMessage(wizardArmorToughnessLabel());
+            }
+        }
+
         @Override
         public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
             this.renderBackground(graphics, mouseX, mouseY, partialTick);
@@ -228,7 +283,7 @@ public final class MageAdditionsConfigScreen extends Screen {
 
             Component description = switch (this.tab) {
                 case BALANCE_TWEAKS -> Component.literal(
-                        "Per-spell cast time, mana, cooldown, targeting and generic behaviour overrides."
+                        "Per-spell balance overrides plus global equipment balance tweaks such as Wizard Armour toughness."
                 );
                 case SPELL_REWORKS -> Component.literal(
                         "Dedicated replacements and larger behaviour changes for existing Iron's Spells spells."
@@ -238,6 +293,9 @@ public final class MageAdditionsConfigScreen extends Screen {
                 );
                 case MINIGAME -> Component.literal(
                         "Master switch for team selection, match setup, protection, borders, scoring, match controls and other minigame features."
+                );
+                case SERVER_ADDITIONS -> Component.literal(
+                        "General server mechanics kept separate from Mage Manhunt and spell tweaks. Currently contains the Domain Relic."
                 );
                 case LOOT_CHANGES -> Component.literal(
                         "Uses the custom Iron's loot tables for bookshelves, magic treasure, mage drops, curios, ink, and pyromancer supplies."
@@ -254,7 +312,7 @@ public final class MageAdditionsConfigScreen extends Screen {
                         Math.max(12, this.width / 2 - 150),
                         this.tab == ModuleTab.SPELL_REWORKS
                                 ? 110 + ReworkEditorRegistry.entries().size() * 30
-                                : 136,
+                                : this.tab == ModuleTab.BALANCE_TWEAKS ? 166 : 136,
                         Math.min(300, this.width - 24),
                         0xFFFFFF
                 );
@@ -310,6 +368,8 @@ public final class MageAdditionsConfigScreen extends Screen {
                         states.spellReworks(),
                         states.customSpells(),
                         states.minigame(),
+                        states.serverAdditions(),
+                        states.wizardArmorToughness(),
                         states.lootChanges(),
                         states.experimental()
                 );
@@ -328,6 +388,8 @@ public final class MageAdditionsConfigScreen extends Screen {
                         enabled,
                         states.customSpells(),
                         states.minigame(),
+                        states.serverAdditions(),
+                        states.wizardArmorToughness(),
                         states.lootChanges(),
                         states.experimental()
                 );
@@ -346,6 +408,8 @@ public final class MageAdditionsConfigScreen extends Screen {
                         states.spellReworks(),
                         enabled,
                         states.minigame(),
+                        states.serverAdditions(),
+                        states.wizardArmorToughness(),
                         states.lootChanges(),
                         states.experimental()
                 );
@@ -364,6 +428,28 @@ public final class MageAdditionsConfigScreen extends Screen {
                         states.spellReworks(),
                         states.customSpells(),
                         enabled,
+                        states.serverAdditions(),
+                        states.wizardArmorToughness(),
+                        states.lootChanges(),
+                        states.experimental()
+                );
+            }
+        },
+        SERVER_ADDITIONS("Server Additions") {
+            @Override
+            boolean enabled(CastTimeOverrides.ModuleStates states) {
+                return states.serverAdditions();
+            }
+
+            @Override
+            CastTimeOverrides.ModuleStates withEnabled(CastTimeOverrides.ModuleStates states, boolean enabled) {
+                return new CastTimeOverrides.ModuleStates(
+                        states.balanceTweaks(),
+                        states.spellReworks(),
+                        states.customSpells(),
+                        states.minigame(),
+                        enabled,
+                        states.wizardArmorToughness(),
                         states.lootChanges(),
                         states.experimental()
                 );
@@ -382,6 +468,8 @@ public final class MageAdditionsConfigScreen extends Screen {
                         states.spellReworks(),
                         states.customSpells(),
                         states.minigame(),
+                        states.serverAdditions(),
+                        states.wizardArmorToughness(),
                         enabled,
                         states.experimental()
                 );
@@ -400,6 +488,8 @@ public final class MageAdditionsConfigScreen extends Screen {
                         states.spellReworks(),
                         states.customSpells(),
                         states.minigame(),
+                        states.serverAdditions(),
+                        states.wizardArmorToughness(),
                         states.lootChanges(),
                         enabled
                 );

@@ -47,6 +47,12 @@ public final class CastTimeConfig {
         /** Master switch for every native minigame feature. */
         public boolean minigame = true;
 
+        /** Master switch for general server additions such as the Domain Relic. */
+        public boolean server_additions = true;
+
+        /** Adds +2 armour toughness to each standard Iron's Wizard Armour piece. */
+        public boolean wizard_armor_toughness = true;
+
         /** Master switch for the custom Iron's loot-table replacement pack. */
         public boolean loot_changes = true;
 

@@ -156,5 +156,11 @@
   "message.mageadditions.minigame.final_showdown_team": "%s is the last team standing. Fight until one player remains!",
   "enchantment.mageadditions.poison_aspect": "Poison Aspect",
   "enchantment.mageadditions.ice_aspect": "Ice Aspect",
-  "ui.mageadditions.blocked_hits": "Blocked Hits: %s"
+  "ui.mageadditions.blocked_hits": "Blocked Hits: %s",
+  "spell.mageadditions.domain": "Domain",
+  "spell.mageadditions.domain.guide": "Channel for 2 seconds to seal the area around you. Every player caught inside is trapped until the timer expires or only one living participant remains. The Domain grants no combat advantage and cannot be crossed by movement, teleportation, projectiles or attacks.",
+  "spell.mageadditions.domain.size": "Diameter: %s blocks",
+  "spell.mageadditions.domain.rule": "Ends when time expires or one participant remains",
+  "item.mageadditions.domain_relic": "Domain Relic",
+  "block.mageadditions.arcane_barrier": "Arcane Barrier"
 }

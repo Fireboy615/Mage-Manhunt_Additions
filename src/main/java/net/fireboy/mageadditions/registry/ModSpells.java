@@ -4,6 +4,7 @@ import io.redspace.ironsspellbooks.api.registry.SpellRegistry;
 import io.redspace.ironsspellbooks.api.spells.AbstractSpell;
 import net.fireboy.mageadditions.MageAdditions;
 import net.fireboy.mageadditions.spell.CaptureSpell;
+import net.fireboy.mageadditions.spell.DomainSpell;
 import net.fireboy.mageadditions.spell.EarthenStepSpell;
 import net.fireboy.mageadditions.spell.MaceInfusionSpell;
 import net.fireboy.mageadditions.spell.MirrorImageSpell;
@@ -30,6 +31,9 @@ public final class ModSpells {
 
     public static final DeferredHolder<AbstractSpell, AbstractSpell> EARTHEN_STEP =
         SPELLS.register("earthen_step", EarthenStepSpell::new);
+
+    public static final DeferredHolder<AbstractSpell, AbstractSpell> DOMAIN =
+        SPELLS.register("domain", DomainSpell::new);
 
     private ModSpells() {
     }

@@ -123,6 +123,8 @@ public final class CastTimeOverrides {
                     modules.spell_reworks,
                     modules.custom_spells,
                     modules.minigame,
+                    modules.server_additions,
+                    modules.wizard_armor_toughness,
                     modules.loot_changes,
                     modules.experimental
             );
@@ -130,12 +132,13 @@ public final class CastTimeOverrides {
             int skipped = castTime.skipped + mana.skipped + cooldown.skipped + behaviors.skipped;
 
             MageAdditions.LOGGER.info(
-                    "Loaded Mage Additions config from {}: modules [balance={}, reworks={}, customSpells={}, minigame={}, lootChanges={}, experimental={}], rules [{} cast-time, {} mana, {} cooldown] ({} skipped)",
+                    "Loaded Mage Additions config from {}: modules [balance={}, reworks={}, customSpells={}, minigame={}, serverAdditions={}, lootChanges={}, experimental={}], rules [{} cast-time, {} mana, {} cooldown] ({} skipped)",
                     CONFIG_PATH,
                     onOff(modules.balance_tweaks),
                     onOff(modules.spell_reworks),
                     onOff(modules.custom_spells),
                     onOff(modules.minigame),
+                    onOff(modules.server_additions),
                     onOff(modules.loot_changes),
                     onOff(modules.experimental),
                     castTime.rules.size(),
@@ -386,6 +389,8 @@ public final class CastTimeOverrides {
                 current.spellReworksEnabled,
                 current.customSpellsEnabled,
                 current.minigameEnabled,
+                current.serverAdditionsEnabled,
+                current.wizardArmorToughnessEnabled,
                 current.lootChangesEnabled,
                 current.experimentalEnabled
         );
@@ -448,6 +453,15 @@ public final class CastTimeOverrides {
         return snapshot.minigameEnabled;
     }
 
+    public static boolean serverAdditionsEnabled() {
+        return snapshot.serverAdditionsEnabled;
+    }
+
+    /** Global equipment balance toggle exposed on the Balance Tweaks config page. */
+    public static boolean wizardArmorToughnessEnabled() {
+        return snapshot.balanceTweaksEnabled && snapshot.wizardArmorToughnessEnabled;
+    }
+
     /** Per-spell setting only; does not include the custom-spells module master switch. */
     public static boolean customSpellSettingEnabled(AbstractSpell spell) {
         if (spell == null || !MageAdditions.MODID.equals(spell.getSpellResource().getNamespace())) {
@@ -481,6 +495,9 @@ public final class CastTimeOverrides {
         Boolean synced = SYNCED_CUSTOM_SPELL_USABLE.get(spell.getSpellId());
         if (synced != null) {
             return synced;
+        }
+        if ("domain".equals(spell.getSpellResource().getPath())) {
+            return serverAdditionsEnabled() && customSpellSettingEnabled(spell);
         }
         return customSpellsEnabled() && customSpellSettingEnabled(spell);
     }
@@ -837,6 +854,8 @@ public final class CastTimeOverrides {
                 + "    \"spell_reworks\": " + states.spellReworks() + ",\n"
                 + "    \"custom_spells\": " + states.customSpells() + ",\n"
                 + "    \"minigame\": " + states.minigame() + ",\n"
+                + "    \"server_additions\": " + states.serverAdditions() + ",\n"
+                + "    \"wizard_armor_toughness\": " + states.wizardArmorToughness() + ",\n"
                 + "    \"loot_changes\": " + states.lootChanges() + ",\n"
                 + "    \"experimental\": " + states.experimental() + "\n"
                 + "  }";
@@ -1130,6 +1149,10 @@ public final class CastTimeOverrides {
                 // Team selection, match setup, protection, borders and all other
                 // native Mage Additions minigame behaviour.
                 "minigame": true,
+
+                // +2 armour toughness per standard Iron's Wizard Armour piece.
+                // Also appears as a toggle on the Balance Tweaks config page.
+                "wizard_armor_toughness": true,
 
                 // Custom Iron's loot tables supplied by Mage Additions.
                 // Turning this off restores Iron's normal loot tables after
@@ -1500,6 +1523,8 @@ public final class CastTimeOverrides {
             boolean spellReworksEnabled,
             boolean customSpellsEnabled,
             boolean minigameEnabled,
+            boolean serverAdditionsEnabled,
+            boolean wizardArmorToughnessEnabled,
             boolean lootChangesEnabled,
             boolean experimentalEnabled
     ) {
@@ -1517,6 +1542,8 @@ public final class CastTimeOverrides {
                     true,
                     true,
                     true,
+                    true,
+                    true,
                     false
             );
         }
@@ -1528,11 +1555,13 @@ public final class CastTimeOverrides {
             boolean spellReworks,
             boolean customSpells,
             boolean minigame,
+            boolean serverAdditions,
+            boolean wizardArmorToughness,
             boolean lootChanges,
             boolean experimental
     ) {
         public static ModuleStates defaults() {
-            return new ModuleStates(true, true, true, true, true, false);
+            return new ModuleStates(true, true, true, true, true, true, true, false);
         }
     }
 

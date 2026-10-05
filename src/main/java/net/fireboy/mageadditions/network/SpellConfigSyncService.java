@@ -30,7 +30,7 @@ public final class SpellConfigSyncService {
     private static SpellConfigPayloads.RuntimeEntry toEntry(AbstractSpell spell) {
         IronsSpellConfigBridge.Settings settings = IronsSpellConfigBridge.read(spell);
         boolean enabled = MageAdditions.MODID.equals(spell.getSpellResource().getNamespace())
-                ? CastTimeOverrides.customSpellsEnabled() && CastTimeOverrides.customSpellSettingEnabled(spell)
+                ? CastTimeOverrides.customSpellUsable(spell)
                 : settings.enabled();
         return new SpellConfigPayloads.RuntimeEntry(
                 spell.getSpellResource(),

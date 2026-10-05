@@ -1,0 +1,7 @@
+{
+  "variants": {
+    "": {
+      "model": "mageadditions:block/arcane_barrier"
+    }
+  }
+}

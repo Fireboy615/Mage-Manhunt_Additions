@@ -21,6 +21,8 @@
     "EvasionEffectMixin",
     "IceTombSpellMixin",
     "IceTombEntityMixin",
+    "ExtendedArmorItemWizardToughnessMixin",
+    "ArmorItemWizardToughnessMixin",
     "LivingEntityShieldInvoker",
     "LivingEntityShieldInteractionMixin",
     "ConnectionAccessor",

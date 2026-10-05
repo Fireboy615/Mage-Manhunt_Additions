@@ -23,7 +23,7 @@ import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
  */
 public final class AspectEnchantmentEvents {
     private static final int POISON_TICKS_PER_LEVEL = 80; // 4 seconds.
-    private static final int ICE_FREEZE_TICKS_PER_LEVEL = 50;
+    private static final int ICE_FREEZE_TICKS_PER_LEVEL = 40;
 
     private AspectEnchantmentEvents() {}
 

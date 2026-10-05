@@ -9,8 +9,13 @@ import net.fireboy.mageadditions.minigame.MinigameRegistry;
 import net.fireboy.mageadditions.minigame.MinigameServerEvents;
 import net.fireboy.mageadditions.network.MinigameNetwork;
 import net.fireboy.mageadditions.network.SpellConfigServerEvents;
+import net.fireboy.mageadditions.registry.ModBlocks;
 import net.fireboy.mageadditions.registry.ModEffects;
+import net.fireboy.mageadditions.registry.ModItems;
 import net.fireboy.mageadditions.registry.ModSpells;
+import net.fireboy.mageadditions.server.domain.DomainConfig;
+import net.fireboy.mageadditions.server.domain.DomainManager;
+import net.fireboy.mageadditions.server.temporaryblock.TemporaryBlockManager;
 import net.fireboy.mageadditions.rework.ArrowVolleyRework;
 import net.fireboy.mageadditions.spell.CaptureManager;
 import net.fireboy.mageadditions.spell.GenericSpellOverrideServerEvents;
@@ -29,11 +34,15 @@ public final class MageAdditions {
 
     public MageAdditions(IEventBus modBus) {
         // Mage Additions registries.
+        ModBlocks.register(modBus);
         ModEffects.register(modBus);
         ModSpells.register(modBus);
+        ModItems.register(modBus);
+        modBus.addListener(ModItems::addCreativeTabContents);
 
         // Existing startup/bootstrap behavior.
         CastTimeOverrides.reload();
+        DomainConfig.reload();
         MinigameRegistry.bootstrap();
 
         // Existing network registration. This must stay on the MOD bus or
@@ -64,6 +73,16 @@ public final class MageAdditions {
         NeoForge.EVENT_BUS.addListener(CaptureManager::onPlayerLoggedOut);
         NeoForge.EVENT_BUS.addListener(CaptureManager::onServerStopping);
         NeoForge.EVENT_BUS.addListener(CaptureManager::onServerStopped);
+        NeoForge.EVENT_BUS.addListener(DomainManager::onServerTick);
+        NeoForge.EVENT_BUS.addListener(DomainManager::onLivingDeath);
+        NeoForge.EVENT_BUS.addListener(DomainManager::onPlayerLoggedOut);
+        NeoForge.EVENT_BUS.addListener(DomainManager::onTeleport);
+        NeoForge.EVENT_BUS.addListener(DomainManager::onEntityTickPre);
+        NeoForge.EVENT_BUS.addListener(DomainManager::onIncomingDamage);
+        NeoForge.EVENT_BUS.addListener(TemporaryBlockManager::onBlockBreak);
+        NeoForge.EVENT_BUS.addListener(TemporaryBlockManager::onExplosionDetonate);
+        NeoForge.EVENT_BUS.addListener(TemporaryBlockManager::onPistonPre);
+        NeoForge.EVENT_BUS.addListener(DomainManager::onServerStopped);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onPlayerLoggedIn);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onPlayerLoggedOut);
         NeoForge.EVENT_BUS.addListener(MinigameServerEvents::onPlayerRespawn);
