@@ -32,7 +32,7 @@ public final class MinigameNetwork {
     private MinigameNetwork() {}
 
     public static void register(RegisterPayloadHandlersEvent event) {
-        PayloadRegistrar registrar = event.registrar("5");
+        PayloadRegistrar registrar = event.registrar("6");
 
         registrar.playToServer(CaptureStrugglePayload.TYPE, CaptureStrugglePayload.STREAM_CODEC, (payload, context) -> {
             if (context.player() instanceof net.minecraft.server.level.ServerPlayer player) context.enqueueWork(() -> net.fireboy.mageadditions.spell.CaptureManager.struggle(player));
@@ -40,7 +40,7 @@ public final class MinigameNetwork {
         registrar.playToServer(MirrorMovementInputPayload.TYPE, MirrorMovementInputPayload.STREAM_CODEC, (payload, context) -> {
             if (context.player() instanceof net.minecraft.server.level.ServerPlayer player) {
                 context.enqueueWork(() -> net.fireboy.mageadditions.spell.MirrorImageManager.updateMovementInput(
-                        player, payload.forward(), payload.strafe()
+                        player, payload.forward(), payload.strafe(), payload.jumpHeld()
                 ));
             }
         });

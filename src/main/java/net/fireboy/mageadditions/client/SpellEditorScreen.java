@@ -990,17 +990,17 @@ public final class SpellEditorScreen extends Screen {
 
     private Component shieldInteractionLabel() {
         String label = switch (this.shieldInteraction) {
-            case "can_disable" -> "Can disable shields";
+            case "axe_only", "can_disable" -> "Only with axe";
             case "cannot_disable" -> "Cannot disable shields";
-            default -> "Vanilla";
+            default -> "Normal";
         };
         return Component.literal(label);
     }
 
     private void cycleShieldInteraction() {
         this.shieldInteraction = switch (this.shieldInteraction) {
-            case "vanilla" -> "can_disable";
-            case "can_disable" -> "cannot_disable";
+            case "vanilla" -> "axe_only";
+            case "axe_only", "can_disable" -> "cannot_disable";
             default -> "vanilla";
         };
         refreshGenericOverrideButtons();

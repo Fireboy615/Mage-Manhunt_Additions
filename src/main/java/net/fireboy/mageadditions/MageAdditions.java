@@ -4,6 +4,7 @@ import com.mojang.logging.LogUtils;
 import net.fireboy.mageadditions.command.ModCommands;
 import net.fireboy.mageadditions.compat.irons.MagehunterBalanceEvents;
 import net.fireboy.mageadditions.config.CastTimeOverrides;
+import net.fireboy.mageadditions.enchantment.AspectEnchantmentEvents;
 import net.fireboy.mageadditions.minigame.MinigameRegistry;
 import net.fireboy.mageadditions.minigame.MinigameServerEvents;
 import net.fireboy.mageadditions.network.MinigameNetwork;
@@ -46,6 +47,7 @@ public final class MageAdditions {
         NeoForge.EVENT_BUS.addListener(SpellBehaviorServerEvents::onServerTick);
         NeoForge.EVENT_BUS.addListener(ProjectileOverrideServerEvents::onEntityJoinLevel);
         NeoForge.EVENT_BUS.addListener(ArrowVolleyRework::onIncomingDamage);
+        NeoForge.EVENT_BUS.addListener(AspectEnchantmentEvents::onDamageApplied);
         NeoForge.EVENT_BUS.addListener(GenericSpellOverrideServerEvents::onEntityJoinLevel);
         NeoForge.EVENT_BUS.addListener(GenericSpellOverrideServerEvents::onEntityLeaveLevel);
         NeoForge.EVENT_BUS.addListener(GenericSpellOverrideServerEvents::onEntityTickPre);

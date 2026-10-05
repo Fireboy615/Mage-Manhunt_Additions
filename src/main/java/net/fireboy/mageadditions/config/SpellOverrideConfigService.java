@@ -357,7 +357,9 @@ public final class SpellOverrideConfigService {
     private static String normalizeShieldInteraction(String mode) {
         if (mode == null) return "vanilla";
         return switch (mode.trim().toLowerCase(java.util.Locale.ROOT)) {
-            case "can_disable", "cannot_disable" -> mode.trim().toLowerCase(java.util.Locale.ROOT);
+            case "axe_only" -> "axe_only";
+            case "can_disable" -> "axe_only"; // migrate the old name.
+            case "cannot_disable" -> "cannot_disable";
             default -> "vanilla";
         };
     }

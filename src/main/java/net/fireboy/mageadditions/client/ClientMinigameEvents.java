@@ -28,6 +28,7 @@ public final class ClientMinigameEvents {
 
     private static float LAST_MIRROR_FORWARD;
     private static float LAST_MIRROR_STRAFE;
+    private static boolean LAST_MIRROR_JUMP;
 
     private ClientMinigameEvents() {}
 
@@ -57,15 +58,21 @@ public final class ClientMinigameEvents {
             if (minecraft.options.keyDown.isDown()) mirrorForward -= 1.0F;
             if (minecraft.options.keyRight.isDown()) mirrorStrafe += 1.0F;
             if (minecraft.options.keyLeft.isDown()) mirrorStrafe -= 1.0F;
+            boolean mirrorJump = minecraft.options.keyJump.isDown();
 
-            // Send continuously while a movement key is held, plus one zero packet
-            // when movement stops. The server ignores this unless mirrors exist.
-            if (mirrorForward != 0.0F || mirrorStrafe != 0.0F
-                    || LAST_MIRROR_FORWARD != 0.0F || LAST_MIRROR_STRAFE != 0.0F) {
-                PacketDistributor.sendToServer(new MirrorMovementInputPayload(mirrorForward, mirrorStrafe));
+            // Send continuously while movement/jump is held, plus one zero/released
+            // packet when input stops. The server ignores this unless mirrors exist.
+            if (mirrorForward != 0.0F || mirrorStrafe != 0.0F || mirrorJump
+                    || LAST_MIRROR_FORWARD != 0.0F || LAST_MIRROR_STRAFE != 0.0F || LAST_MIRROR_JUMP) {
+                PacketDistributor.sendToServer(new MirrorMovementInputPayload(
+                        mirrorForward,
+                        mirrorStrafe,
+                        mirrorJump
+                ));
             }
             LAST_MIRROR_FORWARD = mirrorForward;
             LAST_MIRROR_STRAFE = mirrorStrafe;
+            LAST_MIRROR_JUMP = mirrorJump;
 
             if (ClientCaptureState.isCaptured()) {
             // Capture uses the player's normal jump key (Space by default). Consume

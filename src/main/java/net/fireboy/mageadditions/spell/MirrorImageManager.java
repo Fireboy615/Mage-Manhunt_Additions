@@ -5,6 +5,7 @@ import com.mojang.datafixers.util.Pair;
 import io.netty.channel.embedded.EmbeddedChannel;
 import net.fireboy.mageadditions.MageAdditions;
 import net.fireboy.mageadditions.mixin.ConnectionAccessor;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.game.ClientboundAnimatePacket;
@@ -17,8 +18,8 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
-import net.minecraft.util.RandomSource;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.MoverType;
@@ -50,15 +51,14 @@ import java.util.UUID;
  *
  * <p>Each image is a NeoForge fake server player so normal clients render a real
  * player model with the caster's skin and copied equipment. All images begin
- * directly on top of the caster. Each image receives one permanent random Y-axis
- * transform. The caster's horizontal movement and look direction are both rotated
- * through that same transform, so every image behaves like a rotated copy of the
+ * directly on top of the caster. Each image receives one permanent evenly-spaced
+ * Y-axis transform. The caster's horizontal movement and look direction are both
+ * rotated through that same transform, so every image behaves like a rotated copy of the
  * caster rather than separately patched movement/head states. Images use normal
  * block collision and independently simulated gravity, mirror visible actions, and
  * poof on their first hit.</p>
  */
 public final class MirrorImageManager {
-    private static final RandomSource RANDOM = RandomSource.create();
 
     /**
      * NeoForge FakePlayers share a dummy Connection whose Netty channel is null by
@@ -79,7 +79,7 @@ public final class MirrorImageManager {
      * is pressed against a wall the server otherwise cannot tell the difference
      * between "holding W into the wall" and "not trying to move".
      */
-    public static void updateMovementInput(ServerPlayer owner, float forward, float strafe) {
+    public static void updateMovementInput(ServerPlayer owner, float forward, float strafe, boolean jumpHeld) {
         UUID ownerId = owner.getUUID();
         if (!OWNER_TO_CLONES.containsKey(ownerId)) {
             OWNER_INPUTS.remove(ownerId);
@@ -88,7 +88,7 @@ public final class MirrorImageManager {
 
         float clampedForward = Mth.clamp(forward, -1.0F, 1.0F);
         float clampedStrafe = Mth.clamp(strafe, -1.0F, 1.0F);
-        OWNER_INPUTS.put(ownerId, new MovementInput(clampedForward, clampedStrafe));
+        OWNER_INPUTS.put(ownerId, new MovementInput(clampedForward, clampedStrafe, jumpHeld));
     }
 
     public static void createMirrorImage(ServerLevel level, ServerPlayer owner, int spellLevel) {
@@ -98,6 +98,8 @@ public final class MirrorImageManager {
 
         int effectiveLevel = Math.max(1, spellLevel);
         int cloneCount = effectiveLevel + 2; // I=3, II=4, III=5, then +1 per extra level.
+        int formationCount = cloneCount + 1; // Include the real caster as one point of the formation.
+        float angleStepDegrees = 360.0F / formationCount;
         int durationTicks = MirrorImageSpell.getDurationTicks(effectiveLevel);
         int expiresAtTick = server.getTickCount() + durationTicks;
 
@@ -106,10 +108,11 @@ public final class MirrorImageManager {
             GameProfile profile = new GameProfile(UUID.randomUUID(), owner.getGameProfile().getName());
             profile.getProperties().putAll(owner.getGameProfile().getProperties());
 
-            // One transform controls BOTH movement and facing for the entire life of
-            // this image. This is the core illusion: the clone is simply the owner's
-            // actions rotated into a different world direction.
-            float transformYaw = randomTransformYaw();
+            // Keep the real caster at formation angle 0, then place every
+            // clone on the remaining equally spaced angles. Level I therefore
+            // produces four trajectories at 0/90/180/270 degrees (caster + 3
+            // clones), Level II a pentagon, Level III a hexagon, etc.
+            float transformYaw = Mth.wrapDegrees(angleStepDegrees * (cloneIndex + 1));
 
             MirrorClonePlayer clone = new MirrorClonePlayer(level, profile, owner.getUUID());
             initializeFakeConnection(clone);
@@ -310,13 +313,37 @@ public final class MirrorImageManager {
                 && ownerJumpVelocity > 0.05D;
         boolean cloneCanJump = clone.onGround()
                 || (clone.verticalCollision && verticalVelocity <= 0.0D);
+        double cloneWaterSurface = waterSurfaceY(clone);
+        boolean cloneInWater = !Double.isNaN(cloneWaterSurface)
+                && clone.getY() < cloneWaterSurface - 0.01D;
+        MovementInput movementInput = OWNER_INPUTS.get(owner.getUUID());
+        boolean jumpHeld = movementInput != null && movementInput.jumpHeld();
+
         if (ownerStartedJump && cloneCanJump) {
             verticalVelocity = ownerJumpVelocity;
             clone.hasImpulse = true;
-        } else if (owner.isSwimming() || owner.isFallFlying()) {
-            // These are continuous vertical-control states, so matching the owner's
-            // current Y velocity gives a much closer visual copy.
+        } else if (owner.isFallFlying()) {
             verticalVelocity = owner.getDeltaMovement().y;
+            clone.hasImpulse = true;
+        } else if (cloneInWater) {
+            // Water Y movement is completely clone-local. Use a lightly damped
+            // spring toward a normal upright player's surface depth, with a tiny
+            // per-clone oscillating target so the image naturally bobs even when
+            // the caster is perfectly still and Space is not held.
+            state.waterBobPhase += 0.11D;
+            double bobOffset = Math.sin(state.waterBobPhase) * 0.045D;
+            double targetY = cloneWaterSurface - 1.35D + bobOffset;
+            double spring = (targetY - clone.getY()) * 0.065D;
+
+            // Vanilla water travel retains about 80% vertical velocity each tick.
+            verticalVelocity = verticalVelocity * 0.80D + spring;
+
+            if (jumpHeld) {
+                // Same liquid-jump impulse vanilla applies while the jump key is held.
+                verticalVelocity += 0.04D;
+            }
+
+            verticalVelocity = Mth.clamp(verticalVelocity, -0.085D, 0.12D);
             clone.hasImpulse = true;
         } else {
             // Fake ServerPlayers never receive normal client movement packets, so
@@ -342,7 +369,9 @@ public final class MirrorImageManager {
         double nextVerticalVelocity;
         if (clone.verticalCollision) {
             nextVerticalVelocity = 0.0D;
-        } else if (owner.isSwimming() || owner.isFallFlying()) {
+        } else if (cloneInWater || owner.isFallFlying()) {
+            // Water drag/spring were already integrated above; preserve this local
+            // velocity so the next tick continues the same independent bob.
             nextVerticalVelocity = verticalVelocity;
         } else {
             // Vanilla-like air drag after movement. Horizontal velocity is not
@@ -351,6 +380,35 @@ public final class MirrorImageManager {
         }
 
         clone.setDeltaMovement(0.0D, nextVerticalVelocity, 0.0D);
+    }
+
+    /**
+     * FakePlayer does not reliably maintain vanilla fluid-contact flags because it
+     * never receives normal client movement packets. Find the actual top surface of
+     * the nearby water column instead and drive clone-local buoyancy from that.
+     */
+    private static double waterSurfaceY(Entity entity) {
+        int startY = Mth.floor(entity.getY()) - 1;
+        int endY = startY + 8;
+        double highestSurface = Double.NaN;
+
+        for (int y = startY; y <= endY; y++) {
+            BlockPos pos = BlockPos.containing(entity.getX(), y, entity.getZ());
+            var fluidState = entity.level().getFluidState(pos);
+            if (!fluidState.is(FluidTags.WATER)) {
+                if (!Double.isNaN(highestSurface) && y > Mth.floor(highestSurface)) {
+                    break;
+                }
+                continue;
+            }
+
+            double surface = pos.getY() + fluidState.getHeight(entity.level(), pos);
+            if (Double.isNaN(highestSurface) || surface > highestSurface) {
+                highestSurface = surface;
+            }
+        }
+
+        return highestSurface;
     }
 
     private static void syncVisibleState(
@@ -441,10 +499,6 @@ public final class MirrorImageManager {
             clone.setItemSlot(slot, copy);
             changedEquipment.add(Pair.of(slot, copy.copy()));
         }
-    }
-
-    private static float randomTransformYaw() {
-        return RANDOM.nextFloat() * 360.0F - 180.0F;
     }
 
     private static Vec3 rotateHorizontal(Vec3 movement, float yawOffsetDegrees) {
@@ -555,6 +609,7 @@ public final class MirrorImageManager {
         Vec3 lastOwnerPosition;
         boolean lastOwnerOnGround;
         double lastObservedHorizontalSpeed;
+        double waterBobPhase;
 
         CloneState(
                 UUID ownerId,
@@ -571,10 +626,13 @@ public final class MirrorImageManager {
             this.lastOwnerOnGround = lastOwnerOnGround;
             this.transformYaw = transformYaw;
             this.lastObservedHorizontalSpeed = Math.max(0.02D, clone.getSpeed());
+            // Deterministic but different phase per clone so they do not all move
+            // up and down in a visibly artificial lockstep.
+            this.waterBobPhase = Math.toRadians(transformYaw);
         }
     }
 
-    private record MovementInput(float forward, float strafe) {
+    private record MovementInput(float forward, float strafe, boolean jumpHeld) {
         boolean isMoving() {
             return Math.abs(forward) > 1.0E-4F || Math.abs(strafe) > 1.0E-4F;
         }

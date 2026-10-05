@@ -1,0 +1,12 @@
+{
+  "anvil_cost": 4,
+  "description": {"translate": "enchantment.mageadditions.ice_aspect"},
+  "exclusive_set": ["minecraft:fire_aspect", "mageadditions:poison_aspect"],
+  "max_cost": {"base": 60, "per_level_above_first": 20},
+  "max_level": 2,
+  "min_cost": {"base": 10, "per_level_above_first": 20},
+  "primary_items": "#minecraft:enchantable/sword",
+  "slots": ["mainhand"],
+  "supported_items": "#minecraft:enchantable/fire_aspect",
+  "weight": 2
+}

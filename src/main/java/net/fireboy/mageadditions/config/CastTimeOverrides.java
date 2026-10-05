@@ -1225,7 +1225,7 @@ public final class CastTimeOverrides {
                   //   "follow_cursor": true,               // compatible continuous ground-target spells
                   //   "bounces": 2,                        // block/wall bounces for compatible projectiles
                   //   "cast_duration": { "enabled": true, "mode": "absolute", "value": 6.0 }, // continuous casts, seconds
-                  //   "shield_interaction": "cannot_disable", // vanilla, can_disable, cannot_disable
+                  //   "shield_interaction": "cannot_disable", // vanilla, axe_only, cannot_disable
                   //   "targeting_mode": "both"               // vanilla, self, others, both
                   // }
                 }
@@ -1395,12 +1395,16 @@ public final class CastTimeOverrides {
     }
 
     public enum ShieldInteraction {
-        VANILLA, CAN_DISABLE, CANNOT_DISABLE;
+        VANILLA, AXE_ONLY, CANNOT_DISABLE;
 
         static ShieldInteraction parse(String raw) {
             if (raw == null) return VANILLA;
-            try { return valueOf(raw.trim().toUpperCase(Locale.ROOT)); }
-            catch (IllegalArgumentException ignored) { return null; }
+            return switch (raw.trim().toLowerCase(Locale.ROOT)) {
+                case "vanilla" -> VANILLA;
+                case "axe_only", "can_disable" -> AXE_ONLY; // legacy can_disable migrates cleanly.
+                case "cannot_disable" -> CANNOT_DISABLE;
+                default -> null;
+            };
         }
     }
 

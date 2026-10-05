@@ -152,7 +152,7 @@ public final class CastTimeConfig {
         /** Active lifetime of CONTINUOUS casts. Absolute = seconds; multiplier = native continuous duration x value. */
         public Rule cast_duration = null;
 
-        /** vanilla, can_disable, cannot_disable. Only meaningful for direct shield-blockable hits. */
+        /** vanilla, axe_only, cannot_disable. Only meaningful for direct shield-blockable hits. */
         public String shield_interaction = "vanilla";
 
         /**

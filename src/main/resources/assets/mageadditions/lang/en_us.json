@@ -153,5 +153,8 @@
   "message.mageadditions.minigame.player_wins": "%s Wins!",
   "message.mageadditions.minigame.team_wins": "%s Team Wins!",
   "message.mageadditions.minigame.final_showdown": "FINAL SHOWDOWN!",
-  "message.mageadditions.minigame.final_showdown_team": "%s is the last team standing. Fight until one player remains!"
+  "message.mageadditions.minigame.final_showdown_team": "%s is the last team standing. Fight until one player remains!",
+  "enchantment.mageadditions.poison_aspect": "Poison Aspect",
+  "enchantment.mageadditions.ice_aspect": "Ice Aspect",
+  "ui.mageadditions.blocked_hits": "Blocked Hits: %s"
 }

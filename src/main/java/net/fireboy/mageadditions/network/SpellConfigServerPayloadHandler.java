@@ -470,8 +470,11 @@ public final class SpellConfigServerPayloadHandler {
 
     private static void validateShieldInteraction(String mode) {
         String value = mode == null ? "vanilla" : mode.trim().toLowerCase(Locale.ROOT);
-        if (!value.equals("vanilla") && !value.equals("can_disable") && !value.equals("cannot_disable")) {
-            throw new IllegalArgumentException("Shield interaction must be vanilla, can_disable, or cannot_disable.");
+        if (!value.equals("vanilla")
+                && !value.equals("axe_only")
+                && !value.equals("can_disable")
+                && !value.equals("cannot_disable")) {
+            throw new IllegalArgumentException("Shield interaction must be vanilla, axe_only, or cannot_disable.");
         }
     }
 

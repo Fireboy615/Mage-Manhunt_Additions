@@ -10,8 +10,9 @@ import net.minecraft.resources.ResourceLocation;
  * Client -> server movement intent for Mirror Image.
  * forward: W=+1, S=-1
  * strafe:  D=+1, A=-1
+ * jumpHeld: Space / the player's configured jump key
  */
-public record MirrorMovementInputPayload(float forward, float strafe) implements CustomPacketPayload {
+public record MirrorMovementInputPayload(float forward, float strafe, boolean jumpHeld) implements CustomPacketPayload {
     public static final Type<MirrorMovementInputPayload> TYPE = new Type<>(
             ResourceLocation.fromNamespaceAndPath(MageAdditions.MODID, "mirror_movement_input")
     );
@@ -21,8 +22,13 @@ public record MirrorMovementInputPayload(float forward, float strafe) implements
                     (buf, payload) -> {
                         buf.writeFloat(payload.forward());
                         buf.writeFloat(payload.strafe());
+                        buf.writeBoolean(payload.jumpHeld());
                     },
-                    buf -> new MirrorMovementInputPayload(buf.readFloat(), buf.readFloat())
+                    buf -> new MirrorMovementInputPayload(
+                            buf.readFloat(),
+                            buf.readFloat(),
+                            buf.readBoolean()
+                    )
             );
 
     @Override
